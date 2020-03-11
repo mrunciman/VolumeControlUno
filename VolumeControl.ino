@@ -66,6 +66,8 @@ volatile double pressureAbs = 1000.00;
 int pressThresh = 5;//mbar
 double pressSetpoint = 800;//mbar
 bool pressFlag = true;
+String stepFreq;
+int compareReg;
 
 //Internal interrupt variables
 int motorState = 0;
@@ -122,17 +124,16 @@ void setup() {
   TCCR2A = 0;
   TCCR2B = 0;
   TCNT2 = 0;
-  // Leave timer stopped just now (TCCR2B = 0;)
   // turn on CTC mode
   TCCR2A |= (1 << WGM21);
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
-  TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+  //TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Leave timer stopped just now (TCCR2B = 0;)
   // enable timer compare interrupt
   TIMSK2 |= (1 << OCIE2A);
   // Set OCR, which TCNT counts up to.
   // desired frequency = 16Mhz/(prescaler*(1+OCR))
-  // OCR = 
-  OCR2A = 128;
+  // OCR = 16000000/(1024*stepFreq) - 1
+  //OCR2A = 128;
   interrupts();             // enable all interrupts
 
   //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
@@ -326,11 +327,23 @@ void readSerial() {
     // Control code sends capital S to receive stepCount
     // Capital S in ASCII is 83, so check for that:
     if (setpointDigit == 83) {
-      Serial.println(stepCount);
+      // Serial.println(stepCount);
+      ;
     }
     // Check for capital P:
     else if (setpointDigit == 80) {
-      Serial.println(pressureAbs);
+      // Serial.println(pressureAbs);
+      ;
+    }
+    // Check for capital F:
+    else if (setpointDigit == 70) {
+      stepFreq = Serial.readStringUntil('\n');
+      // stepFreq = stepFreq.toFloat();
+      compareReg = round((16000000/(1024*stepFreq.toFloat()))-1);
+      OCR2A = compareReg;
+      TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+      Serial.println(stepFreq);
+      Serial.println(compareReg);
     }
     else {
       flushInputBuffer[indexPress] = Serial.read();
@@ -346,7 +359,7 @@ void loop() {
     handShake();
   }
 
-  // POn startup, pull -ve pressure and zero the volume
+  // On startup, pull -ve pressure and zero the volume
   if (pressFlag == false){
     pressInitZeroVol();
     stepCount = 0;
@@ -362,14 +375,6 @@ void loop() {
   // Do something if gantry hits limit switches
   if (extInterrupt == true) {
     extInterrupt = false;
-  }
-
-  // Set oscillating stepCount for testing
-  if(stepCount <= 0){
-    motorDirection = false;
-  }
-  if (stepCount >= 5000){
-    motorDirection = true;
   }
 
   // Send pressure and step count
