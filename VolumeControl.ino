@@ -346,16 +346,19 @@ void loop() {
     handShake();
   }
 
-  // Pull -ve pressure to zero the volume
+  // POn startup, pull -ve pressure and zero the volume
   if (pressFlag == false){
     pressInitZeroVol();
+    stepCount = 0;
     pressFlag = true;
   }
+
   // Call overpressure protection function on 20Hz Timer1 interrupt
   if (timer1Interrupt == true) {
     //pressureProtect();
     timer1Interrupt = false;
   }
+
   // Do something if gantry hits limit switches
   if (extInterrupt == true) {
     extInterrupt = false;
@@ -370,5 +373,7 @@ void loop() {
   }
 
   // Send pressure and step count
+
+  // Read in new frequency value
   readSerial();
 }
