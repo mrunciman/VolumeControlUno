@@ -16,7 +16,6 @@
 */
 
 
-#include <LiquidCrystal.h>
 #include <math.h>
 #include <Wire.h>
 //Sensor library - https://github.com/sparkfun/MS5803-14BA_Breakout/
@@ -36,6 +35,13 @@
 #define M1 7
 #define M2 8
 //#define testPin 11
+//Set external interrupt pin numbers
+//Possible interrupt pins on Uno: 2, 3 - 18, 19 on Mega
+//First and second (Xmin and Xmax) end stop headers on Ramps Board
+const byte fwdIntrrptPin = 19;
+const byte bwdIntrrptPin = 18;
+volatile bool extInterrupt;
+volatile bool timer1Interrupt =  false;
 
 //SDA pin = 27
 //SCL pin = 28
@@ -44,9 +50,7 @@ char setpointDigit = 0; // individual bits of set point input
 byte indexPress = 0; // index of input pressure byte
 char setpointInput[7]; // input set point pressure in mbar
 char flushInputBuffer[20];
-float pressSetpoint = 1000; //Set at 1 bar initially
 volatile bool motorDirection;
-volatile bool negativeFlag;
 
 char shakeDigit =0; // individual bit of handshake word
 byte indexShake = 0; // index of handshake input word
@@ -54,37 +58,21 @@ String shakeInput; // 3 bit password to assign pump name/position
 String shakeKey = "RHS";
 bool shakeFlag = false;
 
-//Set external interrupt pin numbers
-//Possible interrupt pins on Uno: 2, 3 - 18, 19 on Mega
-//First and second (Xmin and Xmax) end stop headers on Ramps Board
-const byte fwdIntrrptPin = 19;
-const byte bwdIntrrptPin = 18;
-volatile bool interruptFlag;
-volatile bool timerInterrupt =  false;
-
 //Instantiate sensor
 MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 //Create variables to store results
 //float tempCelsius;
 volatile double pressureAbs = 1000.00;
 int pressThresh = 5;//mbar
+double pressSetpoint = 800;//mbar
 
 //Internal interrupt variables
-volatile int motorState = 0;
-volatile int pressureError;
+int motorState = 0;
+int pressureError;
 long mainFreq = 20;//Hz     20 Hz is maximum sampling rate
 long timerOneCount;
-long timerTwoCount;
-long pulseFreq = 2000;//Hz
 
 volatile int stepCount = 0;
-//float pistonArea = //PI*15mm^2
-//float volumeChange = 0;
-
-
-//LiquidCrystal lcd(7, 8, 9, 10, 11, 12); //This config for Uno
-LiquidCrystal lcd(22, 24, 26, 28, 30, 32);
-
 
 void setup() {
 
@@ -95,7 +83,6 @@ void setup() {
     ;
   }
 
-
   // Disable all interrupts
   noInterrupts();
   //Interrupt config.
@@ -104,8 +91,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(fwdIntrrptPin), forwardInterrupt, HIGH );
   pinMode(bwdIntrrptPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(bwdIntrrptPin), backwardInterrupt, HIGH );
-  interruptFlag = false;
-
+  extInterrupt = false;
 
   // Configuration of DRV8825 driver pins
   pinMode(directionPin, OUTPUT);
@@ -121,7 +107,6 @@ void setup() {
   digitalWrite(M2, HIGH);
   //pinMode(testPin, OUTPUT);
 
-
   // Initialize timer 1 - for 20 Hz pressure sampling
   TCCR1A = 0;
   TCCR1B = 0;
@@ -132,15 +117,19 @@ void setup() {
   TCCR1B |= (1 << CS12);    // prescaler = 256 - on timer 1, pull high clock select bit 2
   TIMSK1 |= (1 << TOIE1);   // enable timer overflow interrupt
 
-  //Initialise timer 2 - for 2 kHz step generation for motor
+  //Initialise timer 2 - prescaler = 1024 gives ~31 - 7812 Hz range
   TCCR2A = 0;
   TCCR2B = 0;
-  // preload timer (2^8 - 16MHz/(prescaler*freq)) for 8 bit counter
-  timerTwoCount = 256 - 16000000 / (64 * pulseFreq);
-  TCNT2 = timerTwoCount;
-  //Leave timer stopped just now (TCCR2B = 0;)
-  TCCR2B |= (1 << CS22);  // prescaler = 64 - on timer 2, pull high clock select bit two high
-  TIMSK2 |= (1 << TOIE2);   // enable timer overflow interrupt
+  TCNT2 = 0;
+  // Leave timer stopped just now (TCCR2B = 0;)
+  // turn on CTC mode
+  // TCCR2B |= (1 << WGM21);
+  // Set CS22, CS21 and CS20 bits for 1024 prescaler
+  TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+  // enable timer compare interrupt
+  TIMSK2 |= (1 << OCIE2A);
+  // Set OCR, which TCNT counts up to 
+  // OCR2A = 249;
   interrupts();             // enable all interrupts
 
   //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
@@ -151,34 +140,21 @@ void setup() {
   // Serial.print("Absolute pressure = ");
   // Serial.print(pressureAbs);
   // Serial.println(" mbar.");
-
-  // set up the LCD's number of columns and rows:
-  lcd.begin(16, 2);
-  lcd.setCursor(0, 0);
-  lcd.print("Desired: ");
-  lcd.setCursor(9, 0);
-  lcd.print(pressSetpoint);
-  lcd.setCursor(0, 1);
-  lcd.print("Current:");
-
 }
+
 
 // Internal interrupt service routine, timer 1 overflow
 ISR(TIMER1_OVF_vect){
   interrupts(); //re-enable interrupts
   // preload the timer each cycle
   TCNT1 = timerOneCount;
-  timerInterrupt = true;
-  //pressureStateMachine();   // Call state machine each cycle //Don't do so much in an interrupt! Set a flag instead.
+  timer1Interrupt = true;
 }
 
+
 // Internal interrupt service routine, timer 2 overflow
-ISR(TIMER2_OVF_vect){
+ISR(TIMER2_COMPA_vect){
   interrupts(); //re-enable interrupts
-  // preload the timer each cycle
-  TCNT2 = timerTwoCount;
-  //digitalWrite(testPin, HIGH);//digitalRead(testPin) ^ 1); // toggle step pin to create pulse
-  //digitalWrite(testPin, LOW);
 
   //toggle step pin to create pulse
   digitalWrite(stepPin, HIGH);
@@ -195,8 +171,27 @@ ISR(TIMER2_OVF_vect){
 }
 
 
+void pressureProtect() {
+  pressureAbs = sensor.getPressure(ADC_4096);
+  // Filter out false readings
+  if (pressureAbs < 0) {
+    pressureAbs = 2500;
+  }
+  else if (pressureAbs > 2500) {
+    pressureAbs = 2499;
+  }
+  //Serial.print("Absolute pressure = ");
+  //Serial.println(pressureAbs);
+  //Serial.println(" mbar.");
 
-void pressureStateMachine() {
+  //Do something if pressure exceeds some limit
+
+}
+
+
+void pressInitZeroVol() {
+  // Loop here until predsure is within threshold? 
+
   //Set state for motor motion based on comparison of pressure signal with setpoint
   //If within pressThresh mbar, don't move motor
   pressureAbs = sensor.getPressure(ADC_4096);
@@ -232,6 +227,9 @@ void pressureStateMachine() {
       motorDirection = false;
       digitalWrite(directionPin, motorDirection);
       //Start timer 2 with prescale value of 32
+
+      // CHANGE TIMER SET UP FOR CTC setup
+
       TCCR2B |= (1 << CS22);    // prescaler = 64 - on timer 2, pull high clock select bit two high
       //Serial.println("INCREASE PRESSURE");
       break;
@@ -246,6 +244,7 @@ void pressureStateMachine() {
   }
 }
 
+
 //External interrupt service function
 //Set both step number and the counter used in for loop of stepping function to zero.
 void forwardInterrupt() {
@@ -253,7 +252,7 @@ void forwardInterrupt() {
   TCCR2B = 0;
   //Stop other interrupts
   noInterrupts();
-  interruptFlag = true;
+  extInterrupt = true;
   //Set serial input to zero
   for (int i = 0; i < sizeof(setpointInput);  ++i ) {
     setpointInput[i] = (char)0;
@@ -266,6 +265,7 @@ void forwardInterrupt() {
   interrupts();
 }
 
+
 //External interrupt service Call function
 //Set both step number, counter used for loop of stepping function to zero.
 void backwardInterrupt() {
@@ -273,7 +273,7 @@ void backwardInterrupt() {
   TCCR2B = 0;
   //Stop other interrupts
   noInterrupts();
-  interruptFlag = true;
+  extInterrupt = true;
   //Set serial input to zero
   for (int i = 0; i < sizeof(setpointInput);  ++i ) {
     setpointInput[i] = (char)0;
@@ -284,47 +284,6 @@ void backwardInterrupt() {
   digitalWrite(directionPin, false);
   moveMotor();
   interrupts();
-}
-
-
-//Function to read input from python script and confirm pump position (TOP, LHS, RHS).
-void handShake() {
-  shakeInput = "";
-  while (Serial.available() > 0) {
-    shakeInput = Serial.readStringUntil('\n');
-  }
-
-  if (shakeInput!=""){
-    Serial.println(shakeInput);
-  }
-  
-  if (shakeInput == shakeKey){
-    shakeFlag = true;
-    // Serial.println(shakeFlag);
-  }
-  indexShake = 0;
-}
-
-//Function to read input in serial monitor and set the new desired pressure.
-void readSerial() {
-  while (Serial.available() > 0) {
-    setpointDigit = Serial.read();
-    // Control code sends capital S to receive stepCount
-    // Capital S in ASCII is 83, so check for that:
-    if (setpointDigit == 83) {
-      Serial.println(stepCount);
-    }
-    // Check for capital
-    else if (setpointDigit == 80) {
-      Serial.println(pressureAbs);
-    }
-    else {
-      flushInputBuffer[indexPress] = Serial.read();
-      indexPress++;
-    }
-    //delay(50);
-  }
-  indexPress = 0;
 }
 
 
@@ -339,29 +298,70 @@ void moveMotor() {
 }
 
 
+//Function to read input from python script and confirm pump position (TOP, LHS, RHS).
+void handShake() {
+  shakeInput = "";
+  while (Serial.available() > 0) {
+    shakeInput = Serial.readStringUntil('\n');
+  }
+  if (shakeInput!=""){
+    Serial.println(shakeInput); // CHANGE SERIAL PRINTS TO SERIAL WRITES
+  }
+  if (shakeInput == shakeKey){
+    shakeFlag = true;
+    // Serial.println(shakeFlag);
+  }
+  indexShake = 0;
+}
+
+
+//Function to read input in serial monitor and set the new desired pressure.
+void readSerial() {
+  while (Serial.available() > 0) {
+    setpointDigit = Serial.read();
+    // Control code sends capital S to receive stepCount
+    // Capital S in ASCII is 83, so check for that:
+    if (setpointDigit == 83) {
+      Serial.println(stepCount);
+    }
+    // Check for capital P:
+    else if (setpointDigit == 80) {
+      Serial.println(pressureAbs);
+    }
+    else {
+      flushInputBuffer[indexPress] = Serial.read();
+      indexPress++;
+    }
+  }
+  indexPress = 0;
+}
+
 
 void loop() {
   while (shakeFlag == false){
     handShake();
   }
 
-  readSerial();
+  // Pull -ve pressure to zero the volume
 
-
-  if (timerInterrupt == true) {
-    //pressureStateMachine();
-    timerInterrupt = false;
+  // Call overpressure protection function on 20Hz Timer1 interrupt
+  if (timer1Interrupt == true) {
+    //pressureProtect();
+    timer1Interrupt = false;
+  }
+  // Do something if gantry hits limit switches
+  if (extInterrupt == true) {
+    extInterrupt = false;
   }
 
-  if (interruptFlag == true) {
-    // lcd.setCursor(9, 0);
-    // lcd.print(pressSetpoint);
-    interruptFlag = false;
-  }
+  // Set oscillating stepCount for testing
   if(stepCount <= 0){
     motorDirection = false;
   }
   if (stepCount >= 5000){
     motorDirection = true;
   }
+
+  // Send pressure and step count
+  readSerial();
 }
