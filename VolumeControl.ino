@@ -65,6 +65,7 @@ MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 volatile double pressureAbs = 1000.00;
 int pressThresh = 5;//mbar
 double pressSetpoint = 800;//mbar
+bool pressFlag = true;
 
 //Internal interrupt variables
 int motorState = 0;
@@ -117,19 +118,21 @@ void setup() {
   TCCR1B |= (1 << CS12);    // prescaler = 256 - on timer 1, pull high clock select bit 2
   TIMSK1 |= (1 << TOIE1);   // enable timer overflow interrupt
 
-  //Initialise timer 2 - prescaler = 1024 gives ~31 - 7812 Hz range
+  //Initialise timer 2 - prescaler = 1024 gives ~61 - 15625 Hz range
   TCCR2A = 0;
   TCCR2B = 0;
   TCNT2 = 0;
   // Leave timer stopped just now (TCCR2B = 0;)
   // turn on CTC mode
-  // TCCR2B |= (1 << WGM21);
+  TCCR2A |= (1 << WGM21);
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
   TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
   // enable timer compare interrupt
   TIMSK2 |= (1 << OCIE2A);
-  // Set OCR, which TCNT counts up to 
-  // OCR2A = 249;
+  // Set OCR, which TCNT counts up to.
+  // desired frequency = 16Mhz/(prescaler*(1+OCR))
+  // OCR = 
+  OCR2A = 128;
   interrupts();             // enable all interrupts
 
   //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
@@ -174,11 +177,14 @@ ISR(TIMER2_COMPA_vect){
 void pressureProtect() {
   pressureAbs = sensor.getPressure(ADC_4096);
   // Filter out false readings
-  if (pressureAbs < 0) {
+  if (pressureAbs < 0){
     pressureAbs = 2500;
   }
-  else if (pressureAbs > 2500) {
+  else if (pressureAbs > 2500){
     pressureAbs = 2499;
+  }
+  if (pressureAbs > 2000){
+    TCCR2B = 0;
   }
   //Serial.print("Absolute pressure = ");
   //Serial.println(pressureAbs);
@@ -226,19 +232,17 @@ void pressInitZeroVol() {
       //Move motor forwards
       motorDirection = false;
       digitalWrite(directionPin, motorDirection);
-      //Start timer 2 with prescale value of 32
-
       // CHANGE TIMER SET UP FOR CTC setup
-
-      TCCR2B |= (1 << CS22);    // prescaler = 64 - on timer 2, pull high clock select bit two high
+      // Set CS22, CS21 and CS20 bits for 1024 prescaler
+      TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);    
       //Serial.println("INCREASE PRESSURE");
       break;
     case 2:
       //Move motor back
       motorDirection = true;
       digitalWrite(directionPin, motorDirection);
-      //Start timer 2 with prescale value of 32
-      TCCR2B |= (1 << CS22);    // prescaler = 64 - on timer 2, pull high clock select bit two high
+      // Set CS22, CS21 and CS20 bits for 1024 prescaler
+      TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
       //Serial.println("DECREASE PRESSURE");
       break;
   }
@@ -343,7 +347,10 @@ void loop() {
   }
 
   // Pull -ve pressure to zero the volume
-
+  if (pressFlag == false){
+    pressInitZeroVol();
+    pressFlag = true;
+  }
   // Call overpressure protection function on 20Hz Timer1 interrupt
   if (timer1Interrupt == true) {
     //pressureProtect();
