@@ -42,19 +42,18 @@
 //First and second (Xmin and Xmax) end stop headers on Ramps Board
 const byte fwdIntrrptPin = 2;
 const byte bwdIntrrptPin = 3;
-volatile bool extInterrupt;
+volatile bool extInterrupt = false;
 // volatile bool timer1Interrupt = false;
 
 ////////////////////////////////////////////////////////
 // Setting OCR from Serial input
-char firstDigit =0;  // For checking start of OCR stream
-char secondDigit =0;
+char firstDigit = 0;  // For checking start of OCR stream
+char secondDigit = 0;
 String compareReg;  // Store incoming OCR value temporarily
-long OCR;
-long OCR_125 = 15999; // OCR for a frequency of 125 Hz
+unsigned long OCR;
+unsigned long OCR_125 = 15999; // OCR for a frequency of 125 Hz
 volatile bool serFlag = false;
 String flushInputBuffer;
-bool OCRFlag = false;
 
 ////////////////////////////////////////////////////////
 // Handshake variables
@@ -82,13 +81,13 @@ volatile bool sampFlag = false;
 int stepsPMM = 100;
 int limitSteps = stepsPMM/2; // number of pulses for 0.5 mm
 int motorState = 0;
-volatile int stepCount = 0;
+volatile int stepCount;
 String stepRecv;
 int stepIn;
 int stepError;
 bool motorDirection = HIGH;
 // number of steps at max step frequency in 125Hz timestep
-int stepsPerLoop = 0.008*2000; 
+int stepsPerLoop = 0.008*2000;
 
 ////////////////////////////////////////////////////////
 // Actuator geometry
@@ -102,24 +101,16 @@ float maxV = factV*(2.0/PI); // volume in mm^3 when fully actuated
 // steps to fill actuator rounded down, minus 1 timestep's worth
 int maxSteps = ((maxV/As)*stepsPMM - stepsPerLoop); 
 
-void setup() {
-  Wire.begin();
-  //Serial configuration
-  Serial.begin(115200);
-  // Wait here until serial port is opened
-  while (!Serial){
-    ;
-  }
 
+void setup() {
   // Disable all interrupts
   noInterrupts();
-  //Interrupt config.
-  //3k3 Pull-up resistors used, switch connects pin to gnd, so falling edge or LOW trigger.
+  // External interrupt config.
+  // 3k3 Pull-up resistors used, switch connects pin to gnd, so falling edge or LOW trigger.
   pinMode(fwdIntrrptPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(fwdIntrrptPin), forwardInterrupt, LOW);
   pinMode(bwdIntrrptPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(bwdIntrrptPin), backwardInterrupt, LOW);
-  extInterrupt = false;
 
   // Configuration of DRV8825 driver pins
   pinModeFast(directionPin, OUTPUT);
@@ -130,17 +121,22 @@ void setup() {
   pinMode(M2, OUTPUT);
   //Set all microstepping pins (M0 - M2) high for 32 microsteps
   //M2M1M0 = 111 = 32, 100 = 16, 011 = 8, 010 = 4, 001 = 2, 000 = 1
-  digitalWriteFast(M0, LOW);
+  digitalWriteFast(M0, HIGH);
   digitalWriteFast(M1, HIGH);
-  digitalWriteFast(M2, LOW);
+  digitalWriteFast(M2, HIGH);
   //pinMode(testPin, OUTPUT);
+  // Start with motor diasbled
+  digitalWriteFast(enablePin, HIGH);
 
   // Initialize timer 1 for stepper pulse generation
   TCCR1A = 0;
   TCCR1B = 0;
-  TCCR1B |= (1 << WGM21);   //Set CTC mode
+  TCCR1C = 0;
+  TCNT1 = 0;
+  TIMSK1 = 0;
+  TCCR1B |= (1 << WGM12);   //Set CTC mode
   TIMSK1 |= (1 << OCIE1A);   // enable timer compare interrupt
-  TCCR1B &= (0 << CS10); // TUrn off clock source
+  TCCR1B &= (0 << CS10); // Turn off clock source
   TCCR1B &= (0 << CS11);
   TCCR1B &= (0 << CS12);
   // TCCR1B |= (1 << CS11);    // prescaler = 8 - on timer 1, pull high clock select bit 1
@@ -154,6 +150,7 @@ void setup() {
   //Initialise timer 2 - prescaler = 1024 gives ~61 - 15625 Hz range
   TCCR2A = 0;
   TCCR2B = 0;
+  TCNT2 = 0;
   TCCR2A |= (1 << WGM21);   //Set CTC mode
   // Set OCR2A to 124 for 125 Hz timer, where serial
   // can be read and pressure taken every 6th cycle.
@@ -165,6 +162,14 @@ void setup() {
   TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
   interrupts();             // enable all interrupts
+
+  Wire.begin();
+  //Serial configuration
+  Serial.begin(115200);
+  // Wait here until serial port is opened
+  while (!Serial){
+    ;
+  }
 
   //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
   sensor.reset();
@@ -227,7 +232,8 @@ void pressureProtect() {
     TCCR1B &= (0 << CS11); //Turn off motor pulse train
     // Move piston back 'manually'
     digitalWriteFast(directionPin, false);
-    moveMotor(); 
+    moveMotor();
+    // Disable motor?
   }
   // Serial.print("Absolute pressure = ");
   // Serial.print(pressureAbs);
@@ -267,12 +273,14 @@ void pressInitZeroVol() {
     case 0:
       //Stop timer/counter 1
       TCCR1B &= (0 << CS11);
+      TCNT1 = 0;
       break;
     case 1:
       //Move motor forwards
       motorDirection = HIGH;
       digitalWriteFast(directionPin, HIGH);
       // Set OCR1A for 500 Hz pulse, for 2.5 mm/s speed
+      TCNT1 = 0;
       OCR1A = 7999;
       // Alter CS22, CS21 and CS20 bits for 8 prescaler
       TCCR1B |= (1 << CS11);
@@ -283,6 +291,7 @@ void pressInitZeroVol() {
       motorDirection = LOW;
       digitalWriteFast(directionPin, LOW);
       // Set OCR1A for 500 Hz pulse, for 2.5 mm/s speed
+      TCNT1 = 0;
       OCR1A = 7999;
       // Alter CS22, CS21 and CS20 bits for 8 prescaler
       TCCR1B |= (1 << CS11);
@@ -293,7 +302,6 @@ void pressInitZeroVol() {
       TCCR1B &= (0 << CS11);
       break;
   }
-
 }
 
 
@@ -354,6 +362,9 @@ void handShake() {
   }
   if (shakeInput == shakeKey){
     shakeFlag = true;
+    // Enable the motor after handshaking
+    digitalWriteFast(enablePin, LOW);
+    shakeInput = "";
     // Serial.println(shakeFlag);
   }
   delayMicroseconds(50000);
@@ -370,10 +381,23 @@ void readSerial() {
     // Capital S in ASCII is 83, so check for that:
     if (firstDigit == 83) {
       stepRecv = Serial.readStringUntil('\n');
-      stepIn = stepRecv.toInt();
-      // Do something to compare received position and actual position
-      Serial.println(stepCount);
-      // Serial.println(stepIn);
+      if (stepRecv == "Closed"){
+        // Disable the motor
+        digitalWriteFast(enablePin, HIGH);
+        TCCR1B &= (0 << CS11);
+        TCCR2B = 0;
+        while(1){
+          ;
+        }
+      }
+      else{
+        stepIn = stepRecv.toInt();
+        stepError = stepIn - stepCount;
+        Serial.println(stepCount);
+        // Do something to compare received position and actual position
+        // Serial.println(stepCount);
+        // Serial.println(stepIn);
+      }
     }
 
     // Check for capital P:
@@ -401,19 +425,29 @@ void readSerial() {
       // Turn on timer 1 if OCR is non-zero and
       // pulse frequency higher than OCR read frequency
       if(OCR == 0){
-        TCCR1B &= (0 << CS11);
+        if (abs(stepError) > 0){
+          TCCR1B &= (0 << CS11);
+          TCNT1 = 0;
+          stepCorrect(stepError);
+          Serial.print("Zero");
+        }
       }
       else if (OCR < OCR_125){
-        OCR1A = OCR;
         if (stepCount < maxSteps){
+          TCNT1 = 0;
+          OCR1A = OCR;
           TCCR1B |= (1 << CS11);
+          Serial.print("Fast");
         }
       }
       else if (OCR > OCR_125){
         TCCR1B &= (0 << CS11);
-        OCRFlag = true;
+        TCNT1 = 0;
+        stepCorrect(stepError);
+        Serial.print("Slow");
       }
-      Serial.println(OCR);
+      // Serial.println(OCR);
+      Serial.println(stepError);
     }
 
     else {
@@ -423,20 +457,38 @@ void readSerial() {
 }
 
 
+void stepCorrect(int errorStep){
+  // Add stepCount < maxSteps check
+  if (errorStep > 0){
+    for (int stepCorrect = 0; stepCorrect < abs(errorStep); stepCorrect++){
+        stepCount += 1;
+        digitalWriteFast(stepPin, HIGH);
+        digitalWriteFast(stepPin, LOW);
+        delayMicroseconds(500);
+      }     
+  }
+  else if (errorStep < 0){
+    for (int stepCorrect = 0; stepCorrect < abs(errorStep); stepCorrect++){
+        stepCount -= 1;
+        digitalWriteFast(stepPin, HIGH);
+        digitalWriteFast(stepPin, LOW);
+        delayMicroseconds(500);
+      }
+  }
+}
+
 
 void loop() {
 
  while (shakeFlag == false){
    handShake();
-   shakeInput = "";
  }
 
   // On startup, pull -ve pressure and zero the volume
   if (pressFlag == false){  // Change this to a while loop later when it works
     // pressInitZeroVol();
-    stepCount = 0;
     pressFlag = true;
-    stepCount = 2169;
+    stepCount = 2168;
   }
 
   // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
@@ -445,28 +497,10 @@ void loop() {
   if (serFlag == true){
     readSerial(); // Read stepIn, send stepCount
     readSerial(); // Read OCR
-    // Correct the position if different
-    stepError = stepIn - stepCount;
-    OCRFlag = true;
-    if (OCRFlag == true){
-      if (stepError > 0){
-        for (int stepCorrect = 0; stepCorrect < abs(stepError); stepCorrect++){
-            stepCount += 1;
-            digitalWriteFast(stepPin, HIGH);
-            digitalWriteFast(stepPin, LOW);
-            delayMicroseconds(500);
-          }     
-      }
-      else if (stepError < 0){
-        for (int stepCorrect = 0; stepCorrect < abs(stepError); stepCorrect++){
-            stepCount -= 1;
-            digitalWriteFast(stepPin, HIGH);
-            digitalWriteFast(stepPin, LOW);
-            delayMicroseconds(500);
-          }
-      }
-      OCRFlag = false;
-    }
+
+    // Correct piston position if different from received
+    // stepCorrect(stepError);
+
     serFlag = false;
   }
   
@@ -484,6 +518,7 @@ void loop() {
     TCCR2B = 0;
     // Turn off timer1 clock input
     TCCR1B &= (0 << CS11);
+    TCNT1 = 0;
     //Disable motor drivers
     digitalWriteFast(enablePin, HIGH);
     pressureProtect();
@@ -492,7 +527,10 @@ void loop() {
     // Need to handshake again to reactivate
     while(shakeFlag == false){
       handShake();
-      shakeInput = "";
+      flushInputBuffer = Serial.readStringUntil('\n');
+      Serial.println("Limit reached.");
+      flushInputBuffer = Serial.readStringUntil('\n');
+      Serial.println("Handshake to activate.");
     }
     // Turn on pressure interrupt
     TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
