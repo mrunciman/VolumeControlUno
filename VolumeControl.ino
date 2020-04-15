@@ -60,7 +60,7 @@ String flushInputBuffer;
 char shakeDigit =0; // individual bit of handshake word
 byte indexShake = 0; // index of handshake input word
 String shakeInput; // 3 bit password to assign pump name/position
-String shakeKey = "RHS";
+String shakeKey = "RHS"; // RHS = 4, TOP = 5, LHS = 6
 bool shakeFlag = false;
 
 ////////////////////////////////////////////////////////
@@ -79,17 +79,22 @@ volatile bool sampFlag = false;
 ////////////////////////////////////////////////////////
 // Stepper variables
 int stepsPMM = 100;
-int limitSteps = stepsPMM/2; // number of pulses for 0.5 mm
+int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int motorState = 0;
 volatile int stepCount;
 String stepRecv;
 int stepIn;
+int stepInPrev;
 int stepError;
 bool motorDirection = HIGH;
-// number of steps at max step frequency in 125Hz timestep
-int stepsPerLoop = 0.008*2000;
-int tSampu = 10000;
-int tStep;
+// number of steps at max step frequency in 100 Hz timestep
+int fSamp = 100;
+int stepsPerLoop = 2000/fSamp;
+int tSampu = 10000; // (1/fSamp)e6 Time between samples in microseconds
+unsigned long tStep; // 
+unsigned long timeSinceStep;
+unsigned long timeNow;
+unsigned long timeAtStep;
 
 ////////////////////////////////////////////////////////
 // Actuator geometry
@@ -140,30 +145,12 @@ void setup() {
   pinMode(M2, OUTPUT);
   //Set all microstepping pins (M0 - M2) high for 32 microsteps
   //M2M1M0 = 111 = 32, 100 = 16, 011 = 8, 010 = 4, 001 = 2, 000 = 1
-  digitalWriteFast(M0, HIGH);
-  digitalWriteFast(M1, HIGH);
-  digitalWriteFast(M2, HIGH);
+  digitalWrite(M0, LOW);
+  digitalWrite(M1, HIGH);
+  digitalWrite(M2, LOW);
   //pinMode(testPin, OUTPUT);
   // Start with motor diasbled
   digitalWriteFast(enablePin, HIGH);
-
-  // Initialize timer 1 for stepper pulse generation
-  TCCR1A = 0;
-  TCCR1B = 0;
-  TCCR1C = 0;
-  TCNT1 = 0;
-  TIMSK1 = 0;
-  TCCR1B |= (1 << WGM12);    //Set CTC mode
-  TIMSK1 |= (1 << OCIE1A);   // enable timer compare interrupt
-  TCCR1B &= (0 << CS10);     // Turn off clock source
-  TCCR1B &= (0 << CS11);
-  TCCR1B &= (0 << CS12);
-  // TCCR1B |= (1 << CS11);    // prescaler = 8 - on timer 1, pull high clock select bit 1
-  // Set OCR1A, which TCNT1 counts up to.
-  // desired frequency = 16Mhz/(prescaler*(1+OCR))
-  // OCR = 16000000/(8*stepFreq) - 1
-  // Minimum OCR value = 999, giving f= 2 kHz
-  // OCR1A = 65535;
 
   //Initialise timer 2 - prescaler = 1024 gives ~61 - 15625 Hz range
   TCCR2A = 0;
@@ -180,24 +167,6 @@ void setup() {
   TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
   interrupts();             // enable all interrupts
-}
-
-
-// Internal interrupt service routine, timer 1 CTC
-ISR(TIMER1_COMPA_vect){
-  interrupts(); //re-enable interrupts
-  //toggle step pin to create pulse
-  digitalWriteFast(stepPin, HIGH);
-  digitalWriteFast(stepPin, LOW);
-  //For volume change calculation:
-  //If moving forwards, increase step counter
-  if (motorDirection == HIGH) {
-    stepCount += 1;
-  }
-  //If moving backwards, decrease step counter
-  else if (motorDirection == LOW) {
-    stepCount -= 1;
-  }
 }
 
 
@@ -229,11 +198,11 @@ void pressureProtect() {
   //Do something if pressure exceeds some limit:
   // Stop motor if pressure reaches maximum allowed value
   if (pressureAbs > pressMAX){
-    TCCR1B &= (0 << CS11); //Turn off motor pulse train
+    ;
     // Move piston back 'manually'
-    digitalWriteFast(directionPin, false);
-    moveMotor();
-    // Disable motor?
+    // digitalWriteFast(directionPin, LOW);
+    // moveMotor();
+    // Disable motor
   }
   // Serial.print("Absolute pressure = ");
   // Serial.print(pressureAbs);
@@ -272,34 +241,23 @@ void pressInitZeroVol() {
   switch (motorState) {
     case 0:
       //Stop timer/counter 1
-      TCCR1B &= (0 << CS11);
-      TCNT1 = 0;
+      // TCCR1B &= (0 << CS11);
+      // TCNT1 = 0;
       break;
     case 1:
       //Move motor forwards
       motorDirection = HIGH;
       digitalWriteFast(directionPin, HIGH);
-      // Set OCR1A for 500 Hz pulse, for 2.5 mm/s speed
-      TCNT1 = 0;
-      OCR1A = 7999;
-      // Alter CS22, CS21 and CS20 bits for 8 prescaler
-      TCCR1B |= (1 << CS11);
       //Serial.println("INCREASE PRESSURE");
       break;
     case 2:
       //Move motor back
       motorDirection = LOW;
       digitalWriteFast(directionPin, LOW);
-      // Set OCR1A for 500 Hz pulse, for 2.5 mm/s speed
-      TCNT1 = 0;
-      OCR1A = 7999;
-      // Alter CS22, CS21 and CS20 bits for 8 prescaler
-      TCCR1B |= (1 << CS11);
       //Serial.println("DECREASE PRESSURE");
       break;
     default:
       //Just in case nothing matches, stop timer/counter
-      TCCR1B &= (0 << CS11);
       break;
   }
 }
@@ -308,16 +266,14 @@ void pressInitZeroVol() {
 //External interrupt service function
 //Set both step number and the counter used in for loop of stepping function to zero.
 void forwardInterrupt() {
-  //Stop timer/counter 1 - stop motor
-  TCCR1B &= (0 << CS11);
   //Stop other interrupts
   noInterrupts();
-//  Serial.println("External Interrupt - Front");
+  // Serial.println("External Interrupt - Front");
   extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
   pressSetpoint = pressureAbs;
   stepCount -= limitSteps; //Keep track of volume change after moveMotor() call
-  digitalWriteFast(directionPin, HIGH);
+  digitalWriteFast(directionPin, LOW);
   moveMotor();
   interrupts();
 }
@@ -326,16 +282,14 @@ void forwardInterrupt() {
 //External interrupt service Call function
 //Set both step number, counter used for loop of stepping function to zero.
 void backwardInterrupt() {
-  //Stop timer/counter 1 - stop motor
-  TCCR1B &= (0 << CS11);
   //Stop other interrupts
   noInterrupts();
-//  Serial.println("External Interrupt - Back");
+  // Serial.println("External Interrupt - Back");
   extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
   pressSetpoint = pressureAbs;
   stepCount += limitSteps; //Keep track of volume change after moveMotor() call
-  digitalWriteFast(directionPin, LOW);
+  digitalWriteFast(directionPin, HIGH);
   moveMotor();
   interrupts();
 }
@@ -384,18 +338,29 @@ void readSerial() {
       if (stepRecv == "Closed"){
         // Disable the motor
         digitalWriteFast(enablePin, HIGH);
-        TCCR1B &= (0 << CS11);
-        TCCR2B = 0;
         while(1){
           ;
         }
       }
       else{
         stepIn = stepRecv.toInt();
+        if (stepIn > maxSteps){
+          stepIn = maxSteps;
+        }
         stepError = stepIn - stepCount;
         if (abs(stepError) > 0){
-          // tStep = ceil(tSampu/stepError);
-          ;
+          // If piston not at desired position,
+          // work out timeStep so that piston reaches
+          // after 1/fSamp seconds
+          tStep = floor(tSampu/abs(stepError));
+          if (tStep < 500){
+            tStep = 500; // Limit fStep to 2 kHz
+          }
+        }
+        else{
+          // Set tStep to unattainably large value
+          // so no steps are made.
+          tStep = 20000;
         }
         Serial.println(stepCount);
         // Do something to compare received position and actual position
@@ -415,43 +380,19 @@ void readSerial() {
       // Check for positive sign
       if (secondDigit == 43){
         // Set direction as forwards
-        motorDirection = HIGH;
-        digitalWriteFast(directionPin, HIGH);
+        // motorDirection = HIGH;
+        // digitalWriteFast(directionPin, HIGH);
+        ;
       }
       // Else check for negative sign
       else if (secondDigit == 45){
         // Set direction as backwards
-        motorDirection = LOW;
-        digitalWriteFast(directionPin, LOW);
+        // motorDirection = LOW;
+        // digitalWriteFast(directionPin, LOW);
+        ;
       }
       compareReg = Serial.readStringUntil('\n');
       OCR = long(compareReg.toFloat());
-      // Turn on timer 1 if OCR is non-zero and
-      // pulse frequency higher than OCR read frequency
-      if(OCR == 0){
-        TCCR1B &= (0 << CS11);
-        TCNT1 = 0;
-        Serial.print("Zero");
-        if (abs(stepError) > 0){
-          // stepCorrect(stepError, 500);
-        }
-      }
-      else if (OCR < OCR_125){
-        if (stepCount < maxSteps){
-          TCNT1 = 0;
-          OCR1A = OCR;
-          // stepCorrect(stepError, tStep);
-          TCCR1B |= (1 << CS11);
-          Serial.print("Fast");
-        }
-      }
-      else if (OCR > OCR_125){
-        TCCR1B &= (0 << CS11);
-        TCNT1 = 0;
-        // stepCorrect(stepError, 500);
-        Serial.print("Slow");
-      }
-      // Serial.println(OCR);
       Serial.println(stepError);
     }
 
@@ -461,32 +402,11 @@ void readSerial() {
   }
 }
 
-
-void stepCorrect(int errorStep, int timeStep){
-  // Add stepCount < maxSteps check
-  if (errorStep > 0){
-    for (int stepCorrect = 0; stepCorrect < abs(errorStep); stepCorrect++){
-        stepCount += 1;
-        digitalWriteFast(stepPin, HIGH);
-        digitalWriteFast(stepPin, LOW);
-        delayMicroseconds(timeStep);
-      }     
-  }
-  else if (errorStep < 0){
-    for (int stepCorrect = 0; stepCorrect < abs(errorStep); stepCorrect++){
-        stepCount -= 1;
-        digitalWriteFast(stepPin, HIGH);
-        digitalWriteFast(stepPin, LOW);
-        delayMicroseconds(timeStep);
-      }
-  }
-}
-
-
 void loop() {
 
  while (shakeFlag == false){
    handShake();
+   stepCount = 2168;
  }
 
   // On startup, pull -ve pressure and zero the volume
@@ -495,20 +415,15 @@ void loop() {
     pressFlag = true;
     stepCount = 2168;
   }
-
   // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
 
-  // Read in new OCR value with Timer2 interrupt
+  // Read in new position value with Timer2 interrupt
   if (serFlag == true){
+    stepInPrev = stepIn;
     readSerial(); // Read stepIn, send stepCount
     readSerial(); // Read OCR
-
-    // Correct piston position if different from received
-    // stepCorrect(stepError);
-
     serFlag = false;
   }
-  
 
   // Call overpressure protection every 6th Timer2 interrupt
   if (sampFlag == true) {
@@ -518,13 +433,10 @@ void loop() {
 
   // Do something if gantry hits limit switches
   if (extInterrupt == true) {
-    // Turn off both interrupts
-    // TCCR1B = 0;
+    // Turn off interrupts
     TCCR2B = 0;
     // Turn off timer1 clock input
-    TCCR1B &= (0 << CS11);
-    TCNT1 = 0;
-    //Disable motor drivers
+    // Disable motor drivers
     digitalWriteFast(enablePin, HIGH);
     pressureProtect();
     // Serial.println(pressureAbs);
@@ -542,5 +454,33 @@ void loop() {
     extInterrupt = false;
   }
 
+  // Step the motor if enough time has passed.
+  timeNow = micros();
+  timeSinceStep = timeNow - timeAtStep;
+  if (tStep == 20000){
+    ;// Do nothing.
+  }
+  else if (timeSinceStep >= tStep){
+    if (stepError > 0){
+      if (stepCount < maxSteps){
+        motorDirection = HIGH;
+        digitalWriteFast(directionPin, HIGH);
+        digitalWriteFast(stepPin, HIGH);
+        digitalWriteFast(stepPin, LOW);
+        stepCount += 1;
+      }
+    }
+    else if (stepError < 0){
+      if (stepCount > 0){
+        motorDirection = LOW;
+        digitalWriteFast(directionPin, LOW);
+        digitalWriteFast(stepPin, HIGH);
+        digitalWriteFast(stepPin, LOW);
+        stepCount -= 1;
+      }
+    }
+    stepError = stepIn - stepCount;
+    timeAtStep = micros();
+  }
 
 }
