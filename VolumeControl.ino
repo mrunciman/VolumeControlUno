@@ -88,6 +88,8 @@ int stepError;
 bool motorDirection = HIGH;
 // number of steps at max step frequency in 125Hz timestep
 int stepsPerLoop = 0.008*2000;
+int tSampu = 10000;
+int tStep;
 
 ////////////////////////////////////////////////////////
 // Actuator geometry
@@ -103,6 +105,23 @@ int maxSteps = ((maxV/As)*stepsPMM - stepsPerLoop);
 
 
 void setup() {
+  Wire.begin();
+  //Serial configuration
+  Serial.begin(115200);
+  // Wait here until serial port is opened
+  while (!Serial){
+    ;
+  }
+
+  //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
+  sensor.reset();
+  sensor.begin();
+  delay(1000);
+  pressureAbs = sensor.getPressure(ADC_4096);
+  // Serial.print("Absolute pressure = ");
+  // Serial.print(pressureAbs);
+  // Serial.println(" mbar.");
+
   // Disable all interrupts
   noInterrupts();
   // External interrupt config.
@@ -134,9 +153,9 @@ void setup() {
   TCCR1C = 0;
   TCNT1 = 0;
   TIMSK1 = 0;
-  TCCR1B |= (1 << WGM12);   //Set CTC mode
+  TCCR1B |= (1 << WGM12);    //Set CTC mode
   TIMSK1 |= (1 << OCIE1A);   // enable timer compare interrupt
-  TCCR1B &= (0 << CS10); // Turn off clock source
+  TCCR1B &= (0 << CS10);     // Turn off clock source
   TCCR1B &= (0 << CS11);
   TCCR1B &= (0 << CS12);
   // TCCR1B |= (1 << CS11);    // prescaler = 8 - on timer 1, pull high clock select bit 1
@@ -145,7 +164,6 @@ void setup() {
   // OCR = 16000000/(8*stepFreq) - 1
   // Minimum OCR value = 999, giving f= 2 kHz
   // OCR1A = 65535;
-
 
   //Initialise timer 2 - prescaler = 1024 gives ~61 - 15625 Hz range
   TCCR2A = 0;
@@ -157,29 +175,11 @@ void setup() {
   // desired frequency = 16Mhz/(prescaler*(1+OCR)) 
     // 16e6/(1024*(255+1))= 61.035 Hz
     // 16e6/(1024*(124+1)) = 125 Hz
-  OCR2A = 124;
+  OCR2A = 156;//124
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
   TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
   interrupts();             // enable all interrupts
-
-  Wire.begin();
-  //Serial configuration
-  Serial.begin(115200);
-  // Wait here until serial port is opened
-  while (!Serial){
-    ;
-  }
-
-  //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
-  sensor.reset();
-  sensor.begin();
-  delay(1000);
-  pressureAbs = sensor.getPressure(ADC_4096);
-  // Serial.print("Absolute pressure = ");
-  // Serial.print(pressureAbs);
-  // Serial.println(" mbar.");
-
 }
 
 
@@ -393,6 +393,10 @@ void readSerial() {
       else{
         stepIn = stepRecv.toInt();
         stepError = stepIn - stepCount;
+        if (abs(stepError) > 0){
+          // tStep = ceil(tSampu/stepError);
+          ;
+        }
         Serial.println(stepCount);
         // Do something to compare received position and actual position
         // Serial.println(stepCount);
@@ -425,17 +429,18 @@ void readSerial() {
       // Turn on timer 1 if OCR is non-zero and
       // pulse frequency higher than OCR read frequency
       if(OCR == 0){
+        TCCR1B &= (0 << CS11);
+        TCNT1 = 0;
+        Serial.print("Zero");
         if (abs(stepError) > 0){
-          TCCR1B &= (0 << CS11);
-          TCNT1 = 0;
-          stepCorrect(stepError);
-          Serial.print("Zero");
+          // stepCorrect(stepError, 500);
         }
       }
       else if (OCR < OCR_125){
         if (stepCount < maxSteps){
           TCNT1 = 0;
           OCR1A = OCR;
+          // stepCorrect(stepError, tStep);
           TCCR1B |= (1 << CS11);
           Serial.print("Fast");
         }
@@ -443,7 +448,7 @@ void readSerial() {
       else if (OCR > OCR_125){
         TCCR1B &= (0 << CS11);
         TCNT1 = 0;
-        stepCorrect(stepError);
+        // stepCorrect(stepError, 500);
         Serial.print("Slow");
       }
       // Serial.println(OCR);
@@ -457,14 +462,14 @@ void readSerial() {
 }
 
 
-void stepCorrect(int errorStep){
+void stepCorrect(int errorStep, int timeStep){
   // Add stepCount < maxSteps check
   if (errorStep > 0){
     for (int stepCorrect = 0; stepCorrect < abs(errorStep); stepCorrect++){
         stepCount += 1;
         digitalWriteFast(stepPin, HIGH);
         digitalWriteFast(stepPin, LOW);
-        delayMicroseconds(500);
+        delayMicroseconds(timeStep);
       }     
   }
   else if (errorStep < 0){
@@ -472,7 +477,7 @@ void stepCorrect(int errorStep){
         stepCount -= 1;
         digitalWriteFast(stepPin, HIGH);
         digitalWriteFast(stepPin, LOW);
-        delayMicroseconds(500);
+        delayMicroseconds(timeStep);
       }
   }
 }
@@ -526,11 +531,11 @@ void loop() {
     shakeFlag = false;
     // Need to handshake again to reactivate
     while(shakeFlag == false){
-      handShake();
       flushInputBuffer = Serial.readStringUntil('\n');
       Serial.println("Limit reached.");
       flushInputBuffer = Serial.readStringUntil('\n');
       Serial.println("Handshake to activate.");
+      handShake();
     }
     // Turn on pressure interrupt
     TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
