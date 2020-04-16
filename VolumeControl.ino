@@ -81,7 +81,7 @@ volatile bool sampFlag = false;
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int motorState = 0;
-volatile int stepCount;
+int stepCount = 2168;
 String stepRecv;
 int stepIn;
 int stepInPrev;
@@ -164,7 +164,7 @@ void setup() {
     // 16e6/(1024*(124+1)) = 125 Hz
   OCR2A = 156;//124
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
-  TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
+  // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
   interrupts();             // enable all interrupts
 }
@@ -240,20 +240,17 @@ void pressInitZeroVol() {
   }
   switch (motorState) {
     case 0:
-      //Stop timer/counter 1
-      // TCCR1B &= (0 << CS11);
-      // TCNT1 = 0;
       break;
     case 1:
       //Move motor forwards
       motorDirection = HIGH;
-      digitalWriteFast(directionPin, HIGH);
+      // digitalWriteFast(directionPin, HIGH);
       //Serial.println("INCREASE PRESSURE");
       break;
     case 2:
       //Move motor back
       motorDirection = LOW;
-      digitalWriteFast(directionPin, LOW);
+      // digitalWriteFast(directionPin, LOW);
       //Serial.println("DECREASE PRESSURE");
       break;
     default:
@@ -311,15 +308,17 @@ void handShake() {
   while (Serial.available() > 0) {
     shakeInput = Serial.readStringUntil('\n');
   }
-  if (shakeInput!=""){
+  if (shakeInput != ""){
     Serial.println(shakeInput); // CHANGE SERIAL PRINTS TO SERIAL WRITES?
-  }
-  if (shakeInput == shakeKey){
-    shakeFlag = true;
-    // Enable the motor after handshaking
-    digitalWriteFast(enablePin, LOW);
-    shakeInput = "";
-    // Serial.println(shakeFlag);
+    if (shakeInput == shakeKey){
+      shakeFlag = true;
+      // Enable the motor after handshaking
+      digitalWriteFast(enablePin, LOW);
+      shakeInput = "";
+      // Start reading serial for step/position
+      TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+      // Serial.println(shakeFlag);
+    }
   }
   delayMicroseconds(50000);
   // indexShake = 0;
@@ -406,14 +405,17 @@ void loop() {
 
  while (shakeFlag == false){
    handShake();
-   stepCount = 2168;
+   
  }
 
   // On startup, pull -ve pressure and zero the volume
   if (pressFlag == false){  // Change this to a while loop later when it works
     // pressInitZeroVol();
     pressFlag = true;
-    stepCount = 2168;
+    // Homing step
+    if (stepCount == 0){
+      stepCount = 2168;
+    }
   }
   // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
 
@@ -458,12 +460,11 @@ void loop() {
   timeNow = micros();
   timeSinceStep = timeNow - timeAtStep;
   if (tStep == 20000){
-    ;// Do nothing.
+    stepError = stepIn - stepCount;
   }
   else if (timeSinceStep >= tStep){
     if (stepError > 0){
       if (stepCount < maxSteps){
-        motorDirection = HIGH;
         digitalWriteFast(directionPin, HIGH);
         digitalWriteFast(stepPin, HIGH);
         digitalWriteFast(stepPin, LOW);
@@ -472,15 +473,13 @@ void loop() {
     }
     else if (stepError < 0){
       if (stepCount > 0){
-        motorDirection = LOW;
         digitalWriteFast(directionPin, LOW);
         digitalWriteFast(stepPin, HIGH);
         digitalWriteFast(stepPin, LOW);
         stepCount -= 1;
       }
     }
-    stepError = stepIn - stepCount;
     timeAtStep = micros();
+    stepError = stepIn - stepCount;
   }
-
 }
