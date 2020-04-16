@@ -229,11 +229,12 @@ void pressureProtect() {
   //Do something if pressure exceeds some limit:
   // Stop motor if pressure reaches maximum allowed value
   if (pressureAbs > pressMAX){
-    TCCR1B &= (0 << CS11); //Turn off motor pulse train
-    // Move piston back 'manually'
-    digitalWriteFast(directionPin, false);
-    moveMotor();
+    // TCCR1B &= (0 << CS11); //Turn off motor pulse train
+    // // Move piston back 'manually'
+    // digitalWriteFast(directionPin, false);
+    // moveMotor();
     // Disable motor?
+    ;
   }
   // Serial.print("Absolute pressure = ");
   // Serial.print(pressureAbs);
