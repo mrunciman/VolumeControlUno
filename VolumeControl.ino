@@ -60,7 +60,7 @@ String flushInputBuffer;
 char shakeDigit =0; // individual bit of handshake word
 byte indexShake = 0; // index of handshake input word
 String shakeInput; // 3 bit password to assign pump name/position
-String shakeKey = "RHS"; // RHS = 4, TOP = 5, LHS = 6
+String shakeKey = "LHS"; // RHS = 4, TOP = 5, LHS = 6
 bool shakeFlag = false;
 
 ////////////////////////////////////////////////////////
@@ -81,17 +81,17 @@ volatile bool sampFlag = false;
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int motorState = 0;
-int stepCount = 2168;
+int stepCount;
 String stepRecv;
 int stepIn;
 int stepInPrev;
-int stepError;
+int stepError = 0;
 bool motorDirection = HIGH;
 // number of steps at max step frequency in 100 Hz timestep
 int fSamp = 100;
 int stepsPerLoop = 2000/fSamp;
 int tSampu = 10000; // (1/fSamp)e6 Time between samples in microseconds
-unsigned long tStep; // 
+int tStep; // 
 unsigned long timeSinceStep;
 unsigned long timeNow;
 unsigned long timeAtStep;
@@ -137,9 +137,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(bwdIntrrptPin), backwardInterrupt, LOW);
 
   // Configuration of DRV8825 driver pins
-  pinModeFast(directionPin, OUTPUT);
-  pinModeFast(stepPin, OUTPUT);
-  pinModeFast(enablePin, OUTPUT);
+  pinMode(directionPin, OUTPUT);
+  pinMode(stepPin, OUTPUT);
+  pinMode(enablePin, OUTPUT);
   pinMode(M0, OUTPUT);
   pinMode(M1, OUTPUT);
   pinMode(M2, OUTPUT);
@@ -150,7 +150,7 @@ void setup() {
   digitalWrite(M2, LOW);
   //pinMode(testPin, OUTPUT);
   // Start with motor diasbled
-  digitalWriteFast(enablePin, HIGH);
+  digitalWrite(enablePin, HIGH);
 
   //Initialise timer 2 - prescaler = 1024 gives ~61 - 15625 Hz range
   TCCR2A = 0;
@@ -307,21 +307,19 @@ void handShake() {
   // shakeInput = "";
   while (Serial.available() > 0) {
     shakeInput = Serial.readStringUntil('\n');
-  }
-  if (shakeInput != ""){
-    Serial.println(shakeInput); // CHANGE SERIAL PRINTS TO SERIAL WRITES?
-    if (shakeInput == shakeKey){
-      shakeFlag = true;
-      // Enable the motor after handshaking
-      digitalWriteFast(enablePin, LOW);
-      shakeInput = "";
-      // Start reading serial for step/position
-      TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
-      // Serial.println(shakeFlag);
+    if (shakeInput != ""){
+      if (shakeInput == shakeKey){
+        Serial.println(shakeInput); // CHANGE SERIAL PRINTS TO SERIAL WRITES?
+        shakeFlag = true;
+        // Enable the motor after handshaking
+        digitalWriteFast(enablePin, LOW);
+        shakeInput = "";
+        // Start reading serial for step/position
+        TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+        // Serial.println(shakeFlag);
+      }
     }
   }
-  delayMicroseconds(50000);
-  // indexShake = 0;
 }
 
 
@@ -337,6 +335,7 @@ void readSerial() {
       if (stepRecv == "Closed"){
         // Disable the motor
         digitalWriteFast(enablePin, HIGH);
+        Serial.println("Disabled");
         while(1){
           ;
         }
@@ -355,44 +354,20 @@ void readSerial() {
           if (tStep < 500){
             tStep = 500; // Limit fStep to 2 kHz
           }
+          Serial.println(stepCount);
         }
         else{
           // Set tStep to unattainably large value
           // so no steps are made.
           tStep = 20000;
+          Serial.println(stepCount);
         }
-        Serial.println(stepCount);
-        // Do something to compare received position and actual position
-        // Serial.println(stepCount);
-        // Serial.println(stepIn);
       }
     }
 
     // Check for capital P:
     else if (firstDigit == 80) {
       Serial.println(pressureAbs);
-    }
-
-    // Check for capital O:
-    else if (firstDigit == 79) {
-      secondDigit = Serial.read();
-      // Check for positive sign
-      if (secondDigit == 43){
-        // Set direction as forwards
-        // motorDirection = HIGH;
-        // digitalWriteFast(directionPin, HIGH);
-        ;
-      }
-      // Else check for negative sign
-      else if (secondDigit == 45){
-        // Set direction as backwards
-        // motorDirection = LOW;
-        // digitalWriteFast(directionPin, LOW);
-        ;
-      }
-      compareReg = Serial.readStringUntil('\n');
-      OCR = long(compareReg.toFloat());
-      Serial.println(stepError);
     }
 
     else {
@@ -403,25 +378,22 @@ void readSerial() {
 
 void loop() {
 
- while (shakeFlag == false){
-   handShake();
-   
- }
+  while (shakeFlag == false){
+    handShake();
+  }
 
   // On startup, pull -ve pressure and zero the volume
   if (pressFlag == false){  // Change this to a while loop later when it works
     // pressInitZeroVol();
     pressFlag = true;
     // Homing step
-    if (stepCount == 0){
-      stepCount = 2168;
-    }
+    stepCount = 2168;
   }
   // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
 
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
-    stepInPrev = stepIn;
+    // stepInPrev = stepIn;
     readSerial(); // Read stepIn, send stepCount
     readSerial(); // Read OCR
     serFlag = false;
@@ -460,9 +432,9 @@ void loop() {
   timeNow = micros();
   timeSinceStep = timeNow - timeAtStep;
   if (tStep == 20000){
-    stepError = stepIn - stepCount;
+    ; // Do nothing
   }
-  else if (timeSinceStep >= tStep){
+  else if (int(timeSinceStep) >= tStep){
     if (stepError > 0){
       if (stepCount < maxSteps){
         digitalWriteFast(directionPin, HIGH);
