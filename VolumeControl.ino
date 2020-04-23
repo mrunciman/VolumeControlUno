@@ -60,7 +60,7 @@ String flushInputBuffer;
 char shakeDigit =0; // individual bit of handshake word
 byte indexShake = 0; // index of handshake input word
 String shakeInput; // 3 bit password to assign pump name/position
-String shakeKey = "LHS"; // RHS = 4, TOP = 5, LHS = 6
+String shakeKey = "TOP"; // RHS = 4, TOP = 5, LHS = 6
 bool shakeFlag = false;
 
 ////////////////////////////////////////////////////////
