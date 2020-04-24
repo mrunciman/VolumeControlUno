@@ -60,7 +60,7 @@ String flushInputBuffer;
 char shakeDigit =0; // individual bit of handshake word
 byte indexShake = 0; // index of handshake input word
 String shakeInput; // 3 bit password to assign pump name/position
-String shakeKey = "TOP"; // RHS = 4, TOP = 5, LHS = 6
+String shakeKey = "RHS"; // RHS = 4, TOP = 5, LHS = 6
 bool shakeFlag = false;
 
 ////////////////////////////////////////////////////////
@@ -123,9 +123,6 @@ void setup() {
   sensor.begin();
   delay(1000);
   pressureAbs = sensor.getPressure(ADC_4096);
-  // Serial.print("Absolute pressure = ");
-  // Serial.print(pressureAbs);
-  // Serial.println(" mbar.");
 
   // Disable all interrupts
   noInterrupts();
@@ -204,9 +201,6 @@ void pressureProtect() {
     // moveMotor();
     // Disable motor
   }
-  // Serial.print("Absolute pressure = ");
-  // Serial.print(pressureAbs);
-  // Serial.println(" mbar.");
 }
 
 
@@ -222,9 +216,6 @@ void pressInitZeroVol() {
   else if (pressureAbs > 2500) {
     pressureAbs = 2499;
   }
-  //Serial.print("Absolute pressure = ");
-  //Serial.println(pressureAbs);
-  //Serial.println(" mbar.");
 
   pressureError = pressureAbs - pressSetpoint;
   if (abs(pressureError) <= pressThresh) {
@@ -265,7 +256,6 @@ void pressInitZeroVol() {
 void forwardInterrupt() {
   //Stop other interrupts
   noInterrupts();
-  // Serial.println("External Interrupt - Front");
   extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
   pressSetpoint = pressureAbs;
@@ -281,7 +271,6 @@ void forwardInterrupt() {
 void backwardInterrupt() {
   //Stop other interrupts
   noInterrupts();
-  // Serial.println("External Interrupt - Back");
   extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
   pressSetpoint = pressureAbs;
@@ -309,14 +298,13 @@ void handShake() {
     shakeInput = Serial.readStringUntil('\n');
     if (shakeInput != ""){
       if (shakeInput == shakeKey){
-        Serial.println(shakeInput); // CHANGE SERIAL PRINTS TO SERIAL WRITES?
+        Serial.println(shakeInput);
         shakeFlag = true;
         // Enable the motor after handshaking
         digitalWriteFast(enablePin, LOW);
         shakeInput = "";
         // Start reading serial for step/position
         TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
-        // Serial.println(shakeFlag);
       }
     }
   }
@@ -335,7 +323,8 @@ void readSerial() {
       if (stepRecv == "Closed"){
         // Disable the motor
         digitalWriteFast(enablePin, HIGH);
-        Serial.println("Disabled");
+        Serial.print(shakeKey);
+        Serial.println(" Disabled");
         while(1){
           ;
         }
@@ -346,6 +335,9 @@ void readSerial() {
           stepIn = maxSteps;
         }
         stepError = stepIn - stepCount;
+        Serial.print(stepCount);
+        Serial.print(",");
+        Serial.println(pressureAbs);
         if (abs(stepError) > 0){
           // If piston not at desired position,
           // work out timeStep so that piston reaches
@@ -354,20 +346,13 @@ void readSerial() {
           if (tStep < 500){
             tStep = 500; // Limit fStep to 2 kHz
           }
-          Serial.println(stepCount);
         }
         else{
           // Set tStep to unattainably large value
           // so no steps are made.
           tStep = 20000;
-          Serial.println(stepCount);
         }
       }
-    }
-
-    // Check for capital P:
-    else if (firstDigit == 80) {
-      Serial.println(pressureAbs);
     }
 
     else {
@@ -383,19 +368,26 @@ void loop() {
   }
 
   // On startup, pull -ve pressure and zero the volume
-  if (pressFlag == false){  // Change this to a while loop later when it works
+  while(pressFlag == false){  // Change this to a while loop later when it works
     // pressInitZeroVol();
-    pressFlag = true;
+
+    // Call overpressure protection every 6th Timer2 interrupt
+    // Update pressure value
+    if (sampFlag == true) {
+    pressureProtect();
+    sampFlag = false;
+    }
+    // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
     // Homing step
     stepCount = 2168;
+    pressFlag = true;
   }
-  // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
+
 
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
     // stepInPrev = stepIn;
-    readSerial(); // Read stepIn, send stepCount
-    readSerial(); // Read OCR
+    readSerial(); // Read stepIn, send stepCount and pressure
     serFlag = false;
   }
 
@@ -413,14 +405,13 @@ void loop() {
     // Disable motor drivers
     digitalWriteFast(enablePin, HIGH);
     pressureProtect();
-    // Serial.println(pressureAbs);
     shakeFlag = false;
     // Need to handshake again to reactivate
     while(shakeFlag == false){
       flushInputBuffer = Serial.readStringUntil('\n');
-      Serial.println("Limit reached.");
-      flushInputBuffer = Serial.readStringUntil('\n');
-      Serial.println("Handshake to activate.");
+      Serial.print(shakeKey);
+      Serial.println(" limit reached,");
+      // flushInputBuffer = Serial.readStringUntil('\n');
       handShake();
     }
     // Turn on pressure interrupt
