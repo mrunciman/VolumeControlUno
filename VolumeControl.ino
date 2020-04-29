@@ -81,7 +81,7 @@ volatile bool sampFlag = false;
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int motorState = 0;
-int stepCount;
+int stepCount = 0;
 String stepRecv;
 int stepIn;
 int stepInPrev;
@@ -91,8 +91,9 @@ bool motorDirection = HIGH;
 int fSamp = 100;
 int stepsPerLoop = 2000/fSamp;
 int tSampu = 10000; // (1/fSamp)e6 Time between samples in microseconds
-int tStep; // 
-unsigned long timeSinceStep;
+unsigned long oneHour = 3600000000;
+unsigned long tStep = oneHour;
+unsigned long timeSinceStep = 0;
 unsigned long timeNow;
 unsigned long timeAtStep;
 
@@ -305,6 +306,8 @@ void handShake() {
         shakeInput = "";
         // Start reading serial for step/position
         TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+        // Initialise the time variables
+        timeAtStep = micros();
       }
     }
   }
@@ -324,7 +327,10 @@ void readSerial() {
         // Disable the motor
         digitalWriteFast(enablePin, HIGH);
         Serial.print(shakeKey);
-        Serial.println(" Disabled");
+        Serial.print(" Disabled,");
+        Serial.print(pressureAbs);
+        Serial.print(",");
+        Serial.println(millis());
         while(1){
           ;
         }
@@ -337,7 +343,9 @@ void readSerial() {
         stepError = stepIn - stepCount;
         Serial.print(stepCount);
         Serial.print(",");
-        Serial.println(pressureAbs);
+        Serial.print(pressureAbs);
+        Serial.print(",");
+        Serial.println(millis());
         if (abs(stepError) > 0){
           // If piston not at desired position,
           // work out timeStep so that piston reaches
@@ -350,7 +358,7 @@ void readSerial() {
         else{
           // Set tStep to unattainably large value
           // so no steps are made.
-          tStep = 20000;
+          tStep = oneHour;
         }
       }
     }
@@ -379,7 +387,7 @@ void loop() {
     }
     // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
     // Homing step
-    stepCount = 2168;
+    stepCount = 0;
     pressFlag = true;
   }
 
@@ -387,6 +395,7 @@ void loop() {
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
     // stepInPrev = stepIn;
+    // Serial.println(stepCount);
     readSerial(); // Read stepIn, send stepCount and pressure
     serFlag = false;
   }
@@ -422,10 +431,10 @@ void loop() {
   // Step the motor if enough time has passed.
   timeNow = micros();
   timeSinceStep = timeNow - timeAtStep;
-  if (tStep == 20000){
+  if (tStep == oneHour){
     ; // Do nothing
   }
-  else if (int(timeSinceStep) >= tStep){
+  else if (timeSinceStep >= tStep){
     if (stepError > 0){
       if (stepCount < maxSteps){
         digitalWriteFast(directionPin, HIGH);
