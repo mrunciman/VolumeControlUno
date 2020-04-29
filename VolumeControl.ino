@@ -51,7 +51,6 @@ char firstDigit = 0;  // For checking start of OCR stream
 char secondDigit = 0;
 String compareReg;  // Store incoming OCR value temporarily
 unsigned long OCR;
-unsigned long OCR_125 = 15999; // OCR for a frequency of 125 Hz
 volatile bool serFlag = false;
 String flushInputBuffer;
 
@@ -67,21 +66,24 @@ bool shakeFlag = false;
 // Pressure sensor variables
 MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
-int pressThresh = 5;//mbar
+int pressThresh = 10;//mbar
 int pressMAX = 2000;
-double pressSetpoint = 800.00;//mbar
+volatile double pressSetpoint = 800.00;//mbar
 bool pressFlag = false;
 int pressureError;
 int sampDiv = 6; // Factor to divide Timer2 frequency by
 volatile int sampCount = 0;
 volatile bool sampFlag = false;
+int OCR_2p5mmps = 7999;
 
 ////////////////////////////////////////////////////////
 // Stepper variables
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int motorState = 0;
-int stepCount;
+int prevMotorState = 0;
+int stateCount = 0;
+volatile int stepCount;
 String stepRecv;
 int stepIn;
 int stepInPrev;
@@ -152,6 +154,20 @@ void setup() {
   // Start with motor diasbled
   digitalWrite(enablePin, HIGH);
 
+  // Set up Timer1 for volume calibration procedure.
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCCR1C = 0;
+  TCNT1 = 0;
+  TIMSK1 = 0;
+  TCCR1B |= (1 << WGM12);  //Set CTC mode
+  TIMSK1 |= (1 << OCIE1A);  //enable timer compare interrupt
+  TCCR1B &= (0 << CS10); // Turn off clock source
+  TCCR1B &= (0 << CS11); 
+  TCCR1B &= (0 << CS12);
+  // TCCR1B |= (1 << CS11);  // Turn on clock with prescaler 8 
+  // OCR1A = 65535;
+
   //Initialise timer 2 - prescaler = 1024 gives ~61 - 15625 Hz range
   TCCR2A = 0;
   TCCR2B = 0;
@@ -160,15 +176,19 @@ void setup() {
   // Set OCR2A to 124 for 125 Hz timer, where serial
   // can be read and pressure taken every 6th cycle.
   // desired frequency = 16Mhz/(prescaler*(1+OCR)) 
-    // 16e6/(1024*(255+1))= 61.035 Hz
-    // 16e6/(1024*(124+1)) = 125 Hz
-  OCR2A = 156;//124
+    // 16e6/(1024*(156+1)) ~ 100 Hz
+  OCR2A = 156;
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
   // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
   interrupts();             // enable all interrupts
 }
 
+ISR(TIMER1_COMPA_vect){
+  interrupts();
+  digitalWriteFast(stepPin, HIGH);
+  digitalWriteFast(stepPin, LOW);
+}
 
 // Internal interrupt service routine, timer 2 overflow
 ISR(TIMER2_COMPA_vect){
@@ -227,8 +247,19 @@ void pressInitZeroVol() {
   //Serial.println(" mbar.");
 
   pressureError = pressureAbs - pressSetpoint;
+  prevMotorState = motorState;
+  // Assign motor state based on pressure error
   if (abs(pressureError) <= pressThresh) {
     motorState = 0;
+    // Increment counter if previous state was also zero
+    // Pressure is stable if counter reaches some limit
+    if (prevMotorState == 0){
+      stateCount += 1;
+    }
+    // Set back to zero if not
+    else{
+      stateCount = 0;
+    }
   }
   //If pressure lower than setpoint, move motor forwards
   else if (pressureError < -pressThresh) {
@@ -240,17 +271,22 @@ void pressInitZeroVol() {
   }
   switch (motorState) {
     case 0:
+      TCCR1B &= (0 << CS11); // Turn off pulse stream
       break;
     case 1:
-      //Move motor forwards
-      motorDirection = HIGH;
-      // digitalWriteFast(directionPin, HIGH);
+      //Move motor forwards at 2.5 mm/s
+      TCNT1 = 0;
+      OCR1A = OCR_2p5mmps;
+      digitalWriteFast(directionPin, HIGH);
+      TCCR1B |= (1 << CS11);  // Turn on motor
       //Serial.println("INCREASE PRESSURE");
       break;
     case 2:
-      //Move motor back
-      motorDirection = LOW;
-      // digitalWriteFast(directionPin, LOW);
+      //Move motor back at 2.5 mm/s
+      TCNT1 = 0;
+      OCR1A = OCR_2p5mmps;
+      digitalWriteFast(directionPin, LOW);
+      TCCR1B |= (1 << CS11);  // Turn on motor
       //Serial.println("DECREASE PRESSURE");
       break;
     default:
@@ -263,6 +299,7 @@ void pressInitZeroVol() {
 //External interrupt service function
 //Set both step number and the counter used in for loop of stepping function to zero.
 void forwardInterrupt() {
+  TCCR1B &= (0 << CS11); // Turn off pulse stream
   //Stop other interrupts
   noInterrupts();
   // Serial.println("External Interrupt - Front");
@@ -279,6 +316,7 @@ void forwardInterrupt() {
 //External interrupt service Call function
 //Set both step number, counter used for loop of stepping function to zero.
 void backwardInterrupt() {
+  TCCR1B &= (0 << CS11); // Turn off pulse stream
   //Stop other interrupts
   noInterrupts();
   // Serial.println("External Interrupt - Back");
@@ -383,13 +421,20 @@ void loop() {
   }
 
   // On startup, pull -ve pressure and zero the volume
-  if (pressFlag == false){  // Change this to a while loop later when it works
-    // pressInitZeroVol();
-    pressFlag = true;
-    // Homing step
-    stepCount = 2168;
+  while (pressFlag == false){  // Change this to a while loop later when it works
+    if (sampFlag == true) {
+      pressInitZeroVol();
+      sampFlag = false;
+    }
+    Serial.println(pressureAbs);
+    Serial.println(stateCount);
+    if (motorState == 2000){
+      TCCR1B &= (0 << CS11); // Turn off pulse stream
+      pressFlag = true;
+      // Step count should now be zero - muscle empty.
+      stepCount = 0;
+    }
   }
-  // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
 
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
@@ -410,6 +455,7 @@ void loop() {
     // Turn off interrupts
     TCCR2B = 0;
     // Turn off timer1 clock input
+    TCCR1B &= (0 << CS11); // Turn off pulse stream
     // Disable motor drivers
     digitalWriteFast(enablePin, HIGH);
     pressureProtect();
@@ -424,8 +470,8 @@ void loop() {
       handShake();
     }
     // Turn on pressure interrupt
-    TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
-    extInterrupt = false;
+    // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+    // extInterrupt = false;
   }
 
   // Step the motor if enough time has passed.
