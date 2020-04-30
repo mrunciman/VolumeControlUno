@@ -75,14 +75,17 @@ int sampDiv = 6; // Factor to divide Timer2 frequency by
 volatile int sampCount = 0;
 volatile bool sampFlag = false;
 int OCR_2p5mmps = 7999;
+// Calibration
+int stateCount = 0;
+int startTime;
+int stableTime = 5000; // time in milliseconds reqd for pressure to be at setpoint
 
 ////////////////////////////////////////////////////////
 // Stepper variables
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
-int motorState = 0;
-int prevMotorState = 0;
-int stateCount = 0;
+int motorState = 3;
+int prevMotorState;
 volatile int stepCount;
 String stepRecv;
 int stepIn;
@@ -93,7 +96,7 @@ bool motorDirection = HIGH;
 int fSamp = 100;
 int stepsPerLoop = 2000/fSamp;
 int tSampu = 10000; // (1/fSamp)e6 Time between samples in microseconds
-int tStep; // 
+int tStep; // Time between subsequent steps for stepError steps in 1/fSamp seconds
 unsigned long timeSinceStep;
 unsigned long timeNow;
 unsigned long timeAtStep;
@@ -254,11 +257,12 @@ void pressInitZeroVol() {
     // Increment counter if previous state was also zero
     // Pressure is stable if counter reaches some limit
     if (prevMotorState == 0){
-      stateCount += 1;
+      stateCount = millis() - startTime;
     }
     // Set back to zero if not
     else{
       stateCount = 0;
+      startTime = millis();
     }
   }
   //If pressure lower than setpoint, move motor forwards
@@ -291,6 +295,7 @@ void pressInitZeroVol() {
       break;
     default:
       //Just in case nothing matches, stop timer/counter
+      TCCR1B &= (0 << CS11); // Turn off pulse stream
       break;
   }
 }
@@ -426,13 +431,17 @@ void loop() {
       pressInitZeroVol();
       sampFlag = false;
     }
-    Serial.println(pressureAbs);
-    Serial.println(stateCount);
-    if (motorState == 2000){
+    
+    if (stateCount >= stableTime){
+      Serial.print(shakeKey);
+      Serial.println(" Zeroed");
       TCCR1B &= (0 << CS11); // Turn off pulse stream
       pressFlag = true;
       // Step count should now be zero - muscle empty.
       stepCount = 0;
+    }
+    else{
+      Serial.println(stateCount);
     }
   }
 
@@ -456,6 +465,8 @@ void loop() {
     TCCR2B = 0;
     // Turn off timer1 clock input
     TCCR1B &= (0 << CS11); // Turn off pulse stream
+    stateCount = 0;
+    startTime = millis();
     // Disable motor drivers
     digitalWriteFast(enablePin, HIGH);
     pressureProtect();
