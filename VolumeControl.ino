@@ -37,6 +37,7 @@
 #define M1 7
 #define M2 8
 //#define testPin 11
+
 //Set external interrupt pin numbers
 //Possible interrupt pins on Uno: 2, 3 - 18, 19 on Mega
 //First and second (Xmin and Xmax) end stop headers on Ramps Board
@@ -48,8 +49,6 @@ volatile bool extInterrupt = false;
 ////////////////////////////////////////////////////////
 // Setting OCR from Serial input
 char firstDigit = 0;  // For checking start of OCR stream
-char secondDigit = 0;
-String compareReg;  // Store incoming OCR value temporarily
 unsigned long OCR;
 unsigned long OCR_125 = 15999; // OCR for a frequency of 125 Hz
 volatile bool serFlag = false;
@@ -85,16 +84,22 @@ int stepIn;
 int stepError = 0;
 bool motorDirection = HIGH;
 // number of steps at max step frequency in 100 Hz timestep
-int fSamp = 100;
+int fSamp = 125;
 int stepsPerLoop = 2000/fSamp;
-int tSampu = 10000; // (1/fSamp)e6 Time between samples in microseconds
+unsigned long tSampu = 1000000/fSamp; // (1/fSamp)e6 Time between samples in microseconds
 unsigned long oneHour = 3600000000;
 unsigned long tStep = oneHour;
 unsigned long timeSinceStep = 0;
 unsigned long timeNow;
 unsigned long timeAtStep;
 unsigned long writeTime;
-char data[40];
+
+////////////////////////////////////////////////////////
+// Messages
+char data[40]; // Char array to write stepNo, pressure and time into
+char endByte[3] = "E";
+char disableMsg[3] = "D ";
+char limitHit[3] = "L ";
 
 ////////////////////////////////////////////////////////
 // Actuator geometry
@@ -159,7 +164,7 @@ void setup() {
   // desired frequency = 16Mhz/(prescaler*(1+OCR)) 
     // 16e6/(1024*(255+1))= 61.035 Hz
     // 16e6/(1024*(124+1)) = 125 Hz
-  OCR2A = 156;//124
+  OCR2A = 124;//124 for 125 Hz and 156 for 100 Hz
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
   // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
@@ -297,8 +302,9 @@ void handShake() {
   while (Serial.available() > 0) {
     shakeInput = Serial.readStringUntil('\n');
     if (shakeInput != ""){
+      sprintf(data, "%s", shakeKey);
+      Serial.write(data);
       if (shakeInput == shakeKey){
-        Serial.println(shakeInput);
         shakeFlag = true;
         // Enable the motor after handshaking
         digitalWrite(enablePin, LOW);
@@ -327,7 +333,7 @@ void readSerial() {
         // Disable the motor
         digitalWrite(enablePin, HIGH);
         writeTime = millis();
-        sprintf(data, "%s,%d,%lu", shakeKey, int(pressureAbs*10), writeTime);
+        sprintf(data, "%s%s,%d,%lu%s", disableMsg, shakeKey, int(pressureAbs*10), writeTime, endByte);
         Serial.write(data);
         while(1){
           ;
@@ -340,7 +346,7 @@ void readSerial() {
         }
         stepError = stepIn - stepCount;
         writeTime = millis();
-        sprintf(data, "%04d,%d,%lu", stepCount, int(pressureAbs*10), writeTime);
+        sprintf(data, "%04d,%d,%lu%s", stepCount, int(pressureAbs*10), writeTime, endByte);
         Serial.write(data); // Change back to stepCount
         if (abs(stepError) > 0){
           // If piston not at desired position,
@@ -390,7 +396,6 @@ void loop() {
 
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
-    // Serial.println(stepCount);
     readSerial(); // Read stepIn, send stepCount and pressure
     serFlag = false;
   }
@@ -413,9 +418,9 @@ void loop() {
     // Need to handshake again to reactivate
     while(shakeFlag == false){
       flushInputBuffer = Serial.readStringUntil('\n');
-      Serial.print(shakeKey);
-      Serial.println(" limit reached,");
-      // flushInputBuffer = Serial.readStringUntil('\n');
+      writeTime = millis();
+      sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, int(pressureAbs*10), writeTime, endByte);
+      Serial.write(data);
       handShake();
     }
     // Turn on pressure interrupt
