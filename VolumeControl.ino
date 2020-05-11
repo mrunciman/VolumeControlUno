@@ -421,7 +421,7 @@ void loop() {
       writeTime = millis();
       sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, int(pressureAbs*10), writeTime, endByte);
       Serial.write(data);
-      handShake();
+      // handShake();
     }
     // Turn on pressure interrupt
     TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
