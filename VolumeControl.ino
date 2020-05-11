@@ -81,14 +81,8 @@ int stableTime = 5000; // time in milliseconds reqd for pressure to be at setpoi
 // Stepper variables
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
-<<<<<<< HEAD
-int motorState = 3;
-int prevMotorState;
-volatile int stepCount;
-=======
 int motorState = 0;
 int stepCount = 0;
->>>>>>> onePrint
 String stepRecv;
 int stepIn;
 int stepError = 0;
@@ -96,16 +90,10 @@ bool motorDirection = HIGH;
 // number of steps at max step frequency in 100 Hz timestep
 int fSamp = 125;
 int stepsPerLoop = 2000/fSamp;
-<<<<<<< HEAD
-int tSampu = 10000; // (1/fSamp)e6 Time between samples in microseconds
-int tStep; // Time between subsequent steps for stepError steps in 1/fSamp seconds
-unsigned long timeSinceStep;
-=======
 unsigned long tSampu = 1000000/fSamp; // (1/fSamp)e6 Time between samples in microseconds
 unsigned long oneHour = 3600000000;
 unsigned long tStep = oneHour;
 unsigned long timeSinceStep = 0;
->>>>>>> onePrint
 unsigned long timeNow;
 unsigned long timeAtStep;
 unsigned long writeTime;
@@ -192,14 +180,9 @@ void setup() {
   // Set OCR2A to 124 for 125 Hz timer, where serial
   // can be read and pressure taken every 6th cycle.
   // desired frequency = 16Mhz/(prescaler*(1+OCR)) 
-<<<<<<< HEAD
-    // 16e6/(1024*(156+1)) ~ 100 Hz
-  OCR2A = 156;
-=======
     // 16e6/(1024*(255+1))= 61.035 Hz
     // 16e6/(1024*(124+1)) = 125 Hz
   OCR2A = 124;//124 for 125 Hz and 156 for 100 Hz
->>>>>>> onePrint
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
   // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
@@ -438,7 +421,6 @@ void loop() {
   }
 
   // On startup, pull -ve pressure and zero the volume
-<<<<<<< HEAD
   while (pressFlag == false){  // Change this to a while loop later when it works
     if (sampFlag == true) {
       pressInitZeroVol();
@@ -457,23 +439,6 @@ void loop() {
       Serial.println(stateCount);
     }
   }
-=======
-  while(pressFlag == false){
-    // pressInitZeroVol();
-
-    // Call overpressure protection every 6th Timer2 interrupt
-    // Update pressure value
-    if (sampFlag == true) {
-    pressureProtect();
-    sampFlag = false;
-    }
-    // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
-    // Homing step
-    stepCount = 2168;
-    pressFlag = true;
-  }
-
->>>>>>> onePrint
 
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
