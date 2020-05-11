@@ -37,6 +37,7 @@
 #define M1 7
 #define M2 8
 //#define testPin 11
+
 //Set external interrupt pin numbers
 //Possible interrupt pins on Uno: 2, 3 - 18, 19 on Mega
 //First and second (Xmin and Xmax) end stop headers on Ramps Board
@@ -48,19 +49,15 @@ volatile bool extInterrupt = false;
 ////////////////////////////////////////////////////////
 // Setting OCR from Serial input
 char firstDigit = 0;  // For checking start of OCR stream
-char secondDigit = 0;
-String compareReg;  // Store incoming OCR value temporarily
 unsigned long OCR;
 volatile bool serFlag = false;
 String flushInputBuffer;
 
 ////////////////////////////////////////////////////////
 // Handshake variables
-char shakeDigit =0; // individual bit of handshake word
-byte indexShake = 0; // index of handshake input word
-String shakeInput; // 3 bit password to assign pump name/position
-String shakeKey = "TOP"; // RHS = 4, TOP = 5, LHS = 6
 bool shakeFlag = false;
+String shakeInput; // 3 bit password to assign pump name/position
+char shakeKey[5] = "TOP"; // RHS = 4, TOP = 5, LHS = 6
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -84,22 +81,41 @@ int stableTime = 5000; // time in milliseconds reqd for pressure to be at setpoi
 // Stepper variables
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
+<<<<<<< HEAD
 int motorState = 3;
 int prevMotorState;
 volatile int stepCount;
+=======
+int motorState = 0;
+int stepCount = 0;
+>>>>>>> onePrint
 String stepRecv;
 int stepIn;
-int stepInPrev;
 int stepError = 0;
 bool motorDirection = HIGH;
 // number of steps at max step frequency in 100 Hz timestep
-int fSamp = 100;
+int fSamp = 125;
 int stepsPerLoop = 2000/fSamp;
+<<<<<<< HEAD
 int tSampu = 10000; // (1/fSamp)e6 Time between samples in microseconds
 int tStep; // Time between subsequent steps for stepError steps in 1/fSamp seconds
 unsigned long timeSinceStep;
+=======
+unsigned long tSampu = 1000000/fSamp; // (1/fSamp)e6 Time between samples in microseconds
+unsigned long oneHour = 3600000000;
+unsigned long tStep = oneHour;
+unsigned long timeSinceStep = 0;
+>>>>>>> onePrint
 unsigned long timeNow;
 unsigned long timeAtStep;
+unsigned long writeTime;
+
+////////////////////////////////////////////////////////
+// Messages
+char data[40]; // Char array to write stepNo, pressure and time into
+char endByte[3] = "E";
+char disableMsg[3] = "D ";
+char limitHit[3] = "L ";
 
 ////////////////////////////////////////////////////////
 // Actuator geometry
@@ -128,9 +144,6 @@ void setup() {
   sensor.begin();
   delay(1000);
   pressureAbs = sensor.getPressure(ADC_4096);
-  // Serial.print("Absolute pressure = ");
-  // Serial.print(pressureAbs);
-  // Serial.println(" mbar.");
 
   // Disable all interrupts
   noInterrupts();
@@ -179,8 +192,14 @@ void setup() {
   // Set OCR2A to 124 for 125 Hz timer, where serial
   // can be read and pressure taken every 6th cycle.
   // desired frequency = 16Mhz/(prescaler*(1+OCR)) 
+<<<<<<< HEAD
     // 16e6/(1024*(156+1)) ~ 100 Hz
   OCR2A = 156;
+=======
+    // 16e6/(1024*(255+1))= 61.035 Hz
+    // 16e6/(1024*(124+1)) = 125 Hz
+  OCR2A = 124;//124 for 125 Hz and 156 for 100 Hz
+>>>>>>> onePrint
   // Set CS22, CS21 and CS20 bits for 1024 prescaler
   // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);   // Turn on
   TIMSK2 |= (1 << OCIE2A);  // enable timer compare interrupt
@@ -227,9 +246,6 @@ void pressureProtect() {
     // moveMotor();
     // Disable motor
   }
-  // Serial.print("Absolute pressure = ");
-  // Serial.print(pressureAbs);
-  // Serial.println(" mbar.");
 }
 
 
@@ -245,9 +261,6 @@ void pressInitZeroVol() {
   else if (pressureAbs > 2500) {
     pressureAbs = 2499;
   }
-  //Serial.print("Absolute pressure = ");
-  //Serial.println(pressureAbs);
-  //Serial.println(" mbar.");
 
   pressureError = pressureAbs - pressSetpoint;
   prevMotorState = motorState;
@@ -307,12 +320,11 @@ void forwardInterrupt() {
   TCCR1B &= (0 << CS11); // Turn off pulse stream
   //Stop other interrupts
   noInterrupts();
-  // Serial.println("External Interrupt - Front");
   extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
   pressSetpoint = pressureAbs;
   stepCount -= limitSteps; //Keep track of volume change after moveMotor() call
-  digitalWriteFast(directionPin, LOW);
+  digitalWrite(directionPin, LOW);
   moveMotor();
   interrupts();
 }
@@ -324,12 +336,11 @@ void backwardInterrupt() {
   TCCR1B &= (0 << CS11); // Turn off pulse stream
   //Stop other interrupts
   noInterrupts();
-  // Serial.println("External Interrupt - Back");
   extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
   pressSetpoint = pressureAbs;
   stepCount += limitSteps; //Keep track of volume change after moveMotor() call
-  digitalWriteFast(directionPin, HIGH);
+  digitalWrite(directionPin, HIGH);
   moveMotor();
   interrupts();
 }
@@ -338,8 +349,8 @@ void backwardInterrupt() {
 void moveMotor() {
   for (volatile unsigned long moveBackB = 0; moveBackB < limitSteps; moveBackB++) {
     //A step is executed when a rising edge is detected on Step motor input
-    digitalWriteFast(stepPin, HIGH);
-    digitalWriteFast(stepPin, LOW);
+    digitalWrite(stepPin, HIGH);
+    digitalWrite(stepPin, LOW);
     delayMicroseconds(500);
   }
 }
@@ -351,15 +362,18 @@ void handShake() {
   while (Serial.available() > 0) {
     shakeInput = Serial.readStringUntil('\n');
     if (shakeInput != ""){
+      sprintf(data, "%s", shakeKey);
+      Serial.write(data);
       if (shakeInput == shakeKey){
-        Serial.println(shakeInput); // CHANGE SERIAL PRINTS TO SERIAL WRITES?
         shakeFlag = true;
         // Enable the motor after handshaking
-        digitalWriteFast(enablePin, LOW);
+        digitalWrite(enablePin, LOW);
         shakeInput = "";
         // Start reading serial for step/position
         TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
-        // Serial.println(shakeFlag);
+        // Initialise the time variables
+        timeAtStep = micros();
+        flushInputBuffer = Serial.readStringUntil('\n');
       }
     }
   }
@@ -377,8 +391,10 @@ void readSerial() {
       stepRecv = Serial.readStringUntil('\n');
       if (stepRecv == "Closed"){
         // Disable the motor
-        digitalWriteFast(enablePin, HIGH);
-        Serial.println("Disabled");
+        digitalWrite(enablePin, HIGH);
+        writeTime = millis();
+        sprintf(data, "%s%s,%d,%lu%s", disableMsg, shakeKey, int(pressureAbs*10), writeTime, endByte);
+        Serial.write(data);
         while(1){
           ;
         }
@@ -389,6 +405,9 @@ void readSerial() {
           stepIn = maxSteps;
         }
         stepError = stepIn - stepCount;
+        writeTime = millis();
+        sprintf(data, "%04d,%d,%lu%s", stepCount, int(pressureAbs*10), writeTime, endByte);
+        Serial.write(data); // Change back to stepCount
         if (abs(stepError) > 0){
           // If piston not at desired position,
           // work out timeStep so that piston reaches
@@ -397,20 +416,13 @@ void readSerial() {
           if (tStep < 500){
             tStep = 500; // Limit fStep to 2 kHz
           }
-          Serial.println(stepCount);
         }
         else{
           // Set tStep to unattainably large value
           // so no steps are made.
-          tStep = 20000;
-          Serial.println(stepCount);
+          tStep = oneHour;
         }
       }
-    }
-
-    // Check for capital P:
-    else if (firstDigit == 80) {
-      Serial.println(pressureAbs);
     }
 
     else {
@@ -426,6 +438,7 @@ void loop() {
   }
 
   // On startup, pull -ve pressure and zero the volume
+<<<<<<< HEAD
   while (pressFlag == false){  // Change this to a while loop later when it works
     if (sampFlag == true) {
       pressInitZeroVol();
@@ -444,12 +457,27 @@ void loop() {
       Serial.println(stateCount);
     }
   }
+=======
+  while(pressFlag == false){
+    // pressInitZeroVol();
+
+    // Call overpressure protection every 6th Timer2 interrupt
+    // Update pressure value
+    if (sampFlag == true) {
+    pressureProtect();
+    sampFlag = false;
+    }
+    // NEED TO MOVE TO HOME POSITION before entering loop in controlSystem.py
+    // Homing step
+    stepCount = 2168;
+    pressFlag = true;
+  }
+
+>>>>>>> onePrint
 
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
-    // stepInPrev = stepIn;
-    readSerial(); // Read stepIn, send stepCount
-    readSerial(); // Read OCR
+    readSerial(); // Read stepIn, send stepCount and pressure
     serFlag = false;
   }
 
@@ -468,17 +496,16 @@ void loop() {
     stateCount = 0;
     startTime = millis();
     // Disable motor drivers
-    digitalWriteFast(enablePin, HIGH);
+    digitalWrite(enablePin, HIGH);
     pressureProtect();
-    // Serial.println(pressureAbs);
     shakeFlag = false;
     // Need to handshake again to reactivate
     while(shakeFlag == false){
       flushInputBuffer = Serial.readStringUntil('\n');
-      Serial.println("Limit reached.");
-      flushInputBuffer = Serial.readStringUntil('\n');
-      Serial.println("Handshake to activate.");
-      handShake();
+      writeTime = millis();
+      sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, int(pressureAbs*10), writeTime, endByte);
+      Serial.write(data);
+      // handShake();
     }
     // Turn on pressure interrupt
     // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
@@ -488,23 +515,23 @@ void loop() {
   // Step the motor if enough time has passed.
   timeNow = micros();
   timeSinceStep = timeNow - timeAtStep;
-  if (tStep == 20000){
+  if (tStep == oneHour){
     ; // Do nothing
   }
-  else if (int(timeSinceStep) >= tStep){
+  else if (timeSinceStep >= tStep){
     if (stepError > 0){
       if (stepCount < maxSteps){
-        digitalWriteFast(directionPin, HIGH);
-        digitalWriteFast(stepPin, HIGH);
-        digitalWriteFast(stepPin, LOW);
+        digitalWrite(directionPin, HIGH);
+        digitalWrite(stepPin, HIGH);
+        digitalWrite(stepPin, LOW);
         stepCount += 1;
       }
     }
     else if (stepError < 0){
       if (stepCount > 0){
-        digitalWriteFast(directionPin, LOW);
-        digitalWriteFast(stepPin, HIGH);
-        digitalWriteFast(stepPin, LOW);
+        digitalWrite(directionPin, LOW);
+        digitalWrite(stepPin, HIGH);
+        digitalWrite(stepPin, LOW);
         stepCount -= 1;
       }
     }
