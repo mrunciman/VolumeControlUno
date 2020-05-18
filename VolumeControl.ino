@@ -20,7 +20,7 @@
 #include <Wire.h>
 //Sensor library - https://github.com/sparkfun/MS5803-14BA_Breakout/
 #include <SparkFun_MS5803_I2C.h>
-#include <digitalWriteFast.h>
+// #include <digitalWriteFast.h>
 #define PI 3.1415926535897932384626433832795
 
 //Connect Stepper motor to motor driver
@@ -57,7 +57,7 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "TOP"; // RHS = 4, TOP = 5, LHS = 6
+char shakeKey[5] = "RHS"; // RHS = 4, TOP = 5, LHS = 6
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -81,8 +81,9 @@ int stableTime = 5000; // time in milliseconds reqd for pressure to be at setpoi
 // Stepper variables
 int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
-int motorState = 0;
-int stepCount = 0;
+int prevMotorState = 0;
+int motorState = 3;
+volatile int stepCount = 0;
 String stepRecv;
 int stepIn;
 int stepError = 0;
@@ -191,8 +192,8 @@ void setup() {
 
 ISR(TIMER1_COMPA_vect){
   interrupts();
-  digitalWriteFast(stepPin, HIGH);
-  digitalWriteFast(stepPin, LOW);
+  digitalWrite(stepPin, HIGH);
+  digitalWrite(stepPin, LOW);
 }
 
 // Internal interrupt service routine, timer 2 overflow
@@ -225,7 +226,7 @@ void pressureProtect() {
   if (pressureAbs > pressMAX){
     ;
     // Move piston back 'manually'
-    // digitalWriteFast(directionPin, LOW);
+    // digitalWrite(directionPin, LOW);
     // moveMotor();
     // Disable motor
   }
@@ -277,7 +278,7 @@ void pressInitZeroVol() {
       //Move motor forwards at 2.5 mm/s
       TCNT1 = 0;
       OCR1A = OCR_2p5mmps;
-      digitalWriteFast(directionPin, HIGH);
+      digitalWrite(directionPin, HIGH);
       TCCR1B |= (1 << CS11);  // Turn on motor
       //Serial.println("INCREASE PRESSURE");
       break;
@@ -285,7 +286,7 @@ void pressInitZeroVol() {
       //Move motor back at 2.5 mm/s
       TCNT1 = 0;
       OCR1A = OCR_2p5mmps;
-      digitalWriteFast(directionPin, LOW);
+      digitalWrite(directionPin, LOW);
       TCCR1B |= (1 << CS11);  // Turn on motor
       //Serial.println("DECREASE PRESSURE");
       break;
@@ -309,6 +310,8 @@ void forwardInterrupt() {
   stepCount -= limitSteps; //Keep track of volume change after moveMotor() call
   digitalWrite(directionPin, LOW);
   moveMotor();
+  // Disable motor drivers
+  digitalWrite(enablePin, HIGH);
   interrupts();
 }
 
@@ -325,6 +328,8 @@ void backwardInterrupt() {
   stepCount += limitSteps; //Keep track of volume change after moveMotor() call
   digitalWrite(directionPin, HIGH);
   moveMotor();
+  // Disable motor drivers
+  digitalWrite(enablePin, HIGH);
   interrupts();
 }
 
@@ -352,6 +357,7 @@ void handShake() {
         // Enable the motor after handshaking
         digitalWrite(enablePin, LOW);
         shakeInput = "";
+        // delay(500);
         // Start reading serial for step/position
         TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
         // Initialise the time variables
@@ -420,25 +426,34 @@ void loop() {
     handShake();
   }
 
-  // On startup, pull -ve pressure and zero the volume
-  while (pressFlag == false){  // Change this to a while loop later when it works
-    if (sampFlag == true) {
-      pressInitZeroVol();
-      sampFlag = false;
-    }
-    
-    if (stateCount >= stableTime){
-      Serial.print(shakeKey);
-      Serial.println(" Zeroed");
-      TCCR1B &= (0 << CS11); // Turn off pulse stream
-      pressFlag = true;
-      // Step count should now be zero - muscle empty.
-      stepCount = 0;
-    }
-    else{
-      Serial.println(stateCount);
-    }
+  if (pressFlag == false){
+    stepCount = 2168;
+    pressFlag = true;
   }
+
+  // On startup, pull -ve pressure and zero the volume
+  // while (pressFlag == false){  // FALSE TO ACTIVATE
+  //   if (sampFlag == true) {
+  //     pressInitZeroVol();
+      
+  //     if (stateCount >= stableTime){
+  //       // Step count should now be zero - muscle empty.
+  //       stepCount = 0;
+  //       writeTime = millis();
+  //       sprintf(data, "%s%04d,%d,%lu%s", shakeKey, stepCount, int(pressureAbs*10), writeTime, endByte);
+  //       Serial.write(data);
+  //       TCCR1B &= (0 << CS11); // Turn off pulse stream
+  //       pressFlag = true;
+
+  //     }
+  //     else{
+  //       writeTime = millis();
+  //       sprintf(data, "%s%04d,%d,%lu%s", shakeKey, stableTime-stateCount, int(pressureAbs*10), writeTime, endByte);
+  //       Serial.write(data);
+  //     }
+  //     sampFlag = false;
+  //   }
+  // }
 
   // Read in new position value with Timer2 interrupt
   if (serFlag == true){
@@ -460,8 +475,6 @@ void loop() {
     TCCR1B &= (0 << CS11); // Turn off pulse stream
     stateCount = 0;
     startTime = millis();
-    // Disable motor drivers
-    digitalWrite(enablePin, HIGH);
     pressureProtect();
     shakeFlag = false;
     // Need to handshake again to reactivate
