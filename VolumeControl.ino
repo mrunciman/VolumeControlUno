@@ -38,6 +38,8 @@
 #define M2 8
 //#define testPin 11
 
+volatile int pumpState;
+
 //Set external interrupt pin numbers
 //Possible interrupt pins on Uno: 2, 3 - 18, 19 on Mega
 //First and second (Xmin and Xmax) end stop headers on Ramps Board
@@ -83,7 +85,7 @@ int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int prevMotorState = 0;
 int motorState = 3;
-volatile int stepCount = 0;
+volatile int stepCount = 2168;
 String stepRecv;
 int stepIn;
 int stepError = 0;
@@ -190,6 +192,7 @@ void setup() {
   interrupts();             // enable all interrupts
 }
 
+// ISR Timer1 used for calibration phase
 ISR(TIMER1_COMPA_vect){
   interrupts();
   digitalWrite(stepPin, HIGH);
@@ -220,22 +223,14 @@ void pressureProtect() {
   // else if (pressureAbs > 2500){
   //   pressureAbs = 2499;
   // }
-
   //Do something if pressure exceeds some limit:
-  // Stop motor if pressure reaches maximum allowed value
   if (pressureAbs > pressMAX){
     ;
-    // Move piston back 'manually'
-    // digitalWrite(directionPin, LOW);
-    // moveMotor();
-    // Disable motor
   }
 }
 
 
 void pressInitZeroVol() {
-  // Loop here until predsure is within threshold? 
-
   //Set state for motor motion based on comparison of pressure signal with setpoint
   //If within pressThresh mbar, don't move motor
   pressureAbs = sensor.getPressure(ADC_4096);
@@ -384,9 +379,9 @@ void readSerial() {
         writeTime = millis();
         sprintf(data, "%s%s,%d,%lu%s", disableMsg, shakeKey, int(pressureAbs*10), writeTime, endByte);
         Serial.write(data);
-        while(1){
-          ;
-        }
+        // while(1){
+        //   ;
+        // }
       }
       else{
         stepIn = stepRecv.toInt();
@@ -421,99 +416,133 @@ void readSerial() {
 }
 
 void loop() {
-
-  while (shakeFlag == false){
-    handShake();
+  if (extInterrupt == true){
+    pumpState = 0;//Limits hit
+  }
+  else if(shakeFlag == false){
+    pumpState = 1;//Handshake
+  }
+  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
+    pumpState = 2;//Calibration
+  }
+  else if(!Serial){
+    pumpState = 1;//Disconnection/handshake
+  }
+  else{
+    pumpState = 4;//Active
   }
 
-  if (pressFlag == false){
-    stepCount = 2168;
-    pressFlag = true;
-  }
-
-  // On startup, pull -ve pressure and zero the volume
-  // while (pressFlag == false){  // FALSE TO ACTIVATE
-  //   if (sampFlag == true) {
-  //     pressInitZeroVol();
-      
-  //     if (stateCount >= stableTime){
-  //       // Step count should now be zero - muscle empty.
-  //       stepCount = 0;
-  //       writeTime = millis();
-  //       sprintf(data, "%s%04d,%d,%lu%s", shakeKey, stepCount, int(pressureAbs*10), writeTime, endByte);
-  //       Serial.write(data);
-  //       TCCR1B &= (0 << CS11); // Turn off pulse stream
-  //       pressFlag = true;
-
-  //     }
-  //     else{
-  //       writeTime = millis();
-  //       sprintf(data, "%s%04d,%d,%lu%s", shakeKey, stableTime-stateCount, int(pressureAbs*10), writeTime, endByte);
-  //       Serial.write(data);
-  //     }
-  //     sampFlag = false;
-  //   }
-  // }
-
-  // Read in new position value with Timer2 interrupt
-  if (serFlag == true){
-    readSerial(); // Read stepIn, send stepCount and pressure
-    serFlag = false;
-  }
-
-  // Call overpressure protection every 6th Timer2 interrupt
-  if (sampFlag == true) {
-    pressureProtect();
-    sampFlag = false;
-  }
-
-  // Do something if gantry hits limit switches
-  if (extInterrupt == true) {
-    // Turn off interrupts
-    TCCR2B = 0;
-    // Turn off timer1 clock input
-    TCCR1B &= (0 << CS11); // Turn off pulse stream
-    stateCount = 0;
-    startTime = millis();
-    pressureProtect();
-    shakeFlag = false;
-    // Need to handshake again to reactivate
-    while(shakeFlag == false){
+  switch(pumpState){
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //Limits hit
+    case 0:
+      //Make sure motor is disabled 
+      digitalWrite(enablePin, HIGH);
+      // Turn off timers for interrupts
+      TCCR2B = 0;
+      // Turn off calibration pulse stream
+      TCCR1B &= (0 << CS11);  
+      stateCount = 0;
+      startTime = millis();
+      pressureProtect();
       flushInputBuffer = Serial.readStringUntil('\n');
       writeTime = millis();
       sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, int(pressureAbs*10), writeTime, endByte);
       Serial.write(data);
-      // handShake();
-    }
-    // Turn on pressure interrupt
-    // TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
-    // extInterrupt = false;
-  }
+      break;
 
-  // Step the motor if enough time has passed.
-  timeNow = micros();
-  timeSinceStep = timeNow - timeAtStep;
-  if (tStep == oneHour){
-    ; // Do nothing
-  }
-  else if (timeSinceStep >= tStep){
-    if (stepError > 0){
-      if (stepCount < maxSteps){
-        digitalWrite(directionPin, HIGH);
-        digitalWrite(stepPin, HIGH);
-        digitalWrite(stepPin, LOW);
-        stepCount += 1;
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //Handshake/disconnection
+    case 1:
+      handShake();
+      break;
+
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //Calibration
+    case 2:
+      if (sampFlag == true) {
+        pressInitZeroVol();
+        // If enough time has passed, say volume is 0, tell python and move on
+        if (stateCount >= stableTime){
+          // Step count should now be zero - muscle empty.
+          stepCount = 0;
+          writeTime = millis();
+          sprintf(data, "%s%04d,%d,%lu%s", shakeKey, stepCount, int(pressureAbs*10), writeTime, endByte);
+          Serial.write(data);
+          TCCR1B &= (0 << CS11); // Turn off pulse stream
+          pressFlag = true;
+        }
+        else{
+          writeTime = millis();
+          sprintf(data, "%s%04d,%d,%lu%s", shakeKey, stableTime-stateCount, int(pressureAbs*10), writeTime, endByte);
+          Serial.write(data);
+        }
+        sampFlag = false;
       }
-    }
-    else if (stepError < 0){
-      if (stepCount > 0){
-        digitalWrite(directionPin, LOW);
-        digitalWrite(stepPin, HIGH);
-        digitalWrite(stepPin, LOW);
-        stepCount -= 1;
+      break;
+
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //Disconnection
+    case 3:
+      ;
+      break;
+
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //Active
+    case 4:
+      if (serFlag == true){
+        readSerial(); // Read stepIn, send stepCount and pressure
+        serFlag = false;
       }
-    }
-    timeAtStep = micros();
-    stepError = stepIn - stepCount;
+      // Call overpressure protection every 6th Timer2 interrupt
+      if (sampFlag == true) {
+        pressureProtect();
+        sampFlag = false;
+      }
+      // Step the motor if enough time has passed.
+      timeNow = micros();
+      timeSinceStep = timeNow - timeAtStep;
+      if (tStep == oneHour){
+        ; // Do nothing
+      }
+      else if (timeSinceStep >= tStep){
+        if (stepError > 0){
+          if (stepCount < maxSteps){
+            digitalWrite(directionPin, HIGH);
+            digitalWrite(stepPin, HIGH);
+            digitalWrite(stepPin, LOW);
+            stepCount += 1;
+          }
+        }
+        else if (stepError < 0){
+          if (stepCount > 0){
+            digitalWrite(directionPin, LOW);
+            digitalWrite(stepPin, HIGH);
+            digitalWrite(stepPin, LOW);
+            stepCount -= 1;
+          }
+        }
+        timeAtStep = micros();
+        stepError = stepIn - stepCount;
+      }
+      break;
+      
+    //////////////////////////////////////////////////////////////////////////////////////////
+    default:
+      //Make sure motor is disabled 
+      digitalWrite(enablePin, HIGH);
+      // Turn off timers for interrupts
+      TCCR2B = 0;
+      // Turn off calibration pulse stream
+      TCCR1B &= (0 << CS11);  
+      stateCount = 0;
+      startTime = millis();
+      pressureProtect();
+      flushInputBuffer = Serial.readStringUntil('\n');
+      writeTime = millis();
+      sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, int(pressureAbs*10), writeTime, endByte);
+      Serial.write(data);
+      break;
+
   }
 }
