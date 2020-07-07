@@ -66,7 +66,7 @@ char shakeKey[5] = "LHS"; // RHS = 4, TOP = 5, LHS = 6
 MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
 int pressThresh = 10;//mbar
-int pressMAX = 2000;
+int pressMAX = 2500;
 volatile double pressSetpoint = 800.00;//mbar
 bool pressFlag = false;
 int pressureError;
@@ -85,14 +85,13 @@ int stepsPMM = 100;
 int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int prevMotorState = 0;
 int motorState = 3;
-volatile int stepCount = 2168;
+volatile int stepCount = 0;
 String stepRecv;
 int stepIn;
 int stepError = 0;
 bool motorDirection = HIGH;
-// number of steps at max step frequency in 100 Hz timestep
-int fSamp = 125;
-int stepsPerLoop = 2000/fSamp;
+int fSamp = 20;
+int stepsPerLoop = 2000/fSamp; // number of steps at max step frequency in fSamp Hz timestep
 unsigned long tSampu = 1000000/fSamp; // (1/fSamp)e6 Time between samples in microseconds
 unsigned long oneHour = 3600000000;
 unsigned long tStep = oneHour;
@@ -100,6 +99,7 @@ unsigned long timeSinceStep = 0;
 unsigned long timeNow;
 unsigned long timeAtStep;
 unsigned long writeTime;
+unsigned long tStep2k = 500; // When tStep equals 500 ms, 2 kHz pulse achieved.
 
 ////////////////////////////////////////////////////////
 // Messages
@@ -134,7 +134,7 @@ void setup() {
   sensor.reset();
   sensor.begin();
   delay(1000);
-  pressureAbs = sensor.getPressure(ADC_4096);
+  pressureAbs = sensor.getPressure(ADC_2048);
 
   // Disable all interrupts
   noInterrupts();
@@ -202,7 +202,7 @@ ISR(TIMER1_COMPA_vect){
 // Internal interrupt service routine, timer 2 overflow
 ISR(TIMER2_COMPA_vect){
   interrupts(); //re-enable interrupts
-  // This will be called at 125 Hz, so every sampDiv times set sampling flag to reduce the frequency.
+  // This will be called at 125 Hz, so every sampDiv times set sampling flag, reducing the frequency.
   if (sampCount == sampDiv){
     sampFlag = true;
     sampCount = 1;
@@ -215,17 +215,17 @@ ISR(TIMER2_COMPA_vect){
 
 
 void pressureProtect() {
-  pressureAbs = sensor.getPressure(ADC_4096);
+  pressureAbs = sensor.getPressure(ADC_2048);
   // Filter out false readings
-  // if (pressureAbs < 0){
-  //   pressureAbs = 2500;
+  // if (pressureAbs < 0) {
+  //   pressureAbs = pressMAX;
   // }
-  // else if (pressureAbs > 2500){
-  //   pressureAbs = 2499;
+  // else if (pressureAbs > pressMAX) {
+  //   pressureAbs = pressMAX-1;
   // }
   //Do something if pressure exceeds some limit:
   if (pressureAbs > pressMAX){
-    ;
+    extInterrupt = true;
   }
 }
 
@@ -233,13 +233,13 @@ void pressureProtect() {
 void pressInitZeroVol() {
   //Set state for motor motion based on comparison of pressure signal with setpoint
   //If within pressThresh mbar, don't move motor
-  pressureAbs = sensor.getPressure(ADC_4096);
-  if (pressureAbs < 0) {
-    pressureAbs = 2500;
-  }
-  else if (pressureAbs > 2500) {
-    pressureAbs = 2499;
-  }
+  pressureAbs = sensor.getPressure(ADC_2048);
+  // if (pressureAbs < 0) {
+  //   pressureAbs = pressMAX;
+  // }
+  // else if (pressureAbs > pressMAX) {
+  //   pressureAbs = pressMAX-1;
+  // }
 
   pressureError = pressureAbs - pressSetpoint;
   prevMotorState = motorState;
@@ -365,7 +365,7 @@ void handShake() {
 
 //Function to read input in serial monitor and set the new desired pressure.
 void readWriteSerial() {
-  while (Serial.available() > 0) {
+  if (Serial.available() > 0) {
     firstDigit = Serial.read();
     // Control code sends capital S to receive stepCount
     // Capital S in ASCII is 83, so check for that:
@@ -389,8 +389,8 @@ void readWriteSerial() {
           // If piston not at desired position,
           // work out timeStep so that piston reaches after 1/fSamp seconds
           tStep = floor(tSampu/abs(stepError));
-          if (tStep < 500){
-            tStep = 500; // Limit fStep to 2 kHz
+          if (tStep < tStep2k){
+            tStep = tStep2k; // Limit fStep to 2 kHz
           }
         }
         else{
@@ -441,7 +441,7 @@ void writeSerial(char msg){
   if (msg == 'S'){ // Normal operation, send stepCount etc
     sprintf(data, "%04d,%d,%lu%s", stepCount, int(pressureAbs*10), writeTime, endByte);
   }
-  else if (msg == 'D'){ // Python cut off comms, acknowledge
+  else if (msg == 'D'){ // Python cut off comms, acknowledge this
     sprintf(data, "%s%s,%d,%lu%s", disableMsg, shakeKey, int(pressureAbs*10), writeTime, endByte);
   }
   else if (msg == 'L'){ // Limit switch hit, advise Python
@@ -464,7 +464,7 @@ void loop() {
   else if(shakeFlag == false){
     pumpState = 1;//Handshake
   }
-  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
+  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 2;//Calibration
   }
   else if(!Serial){
@@ -503,6 +503,7 @@ void loop() {
 
     //////////////////////////////////////////////////////////////////////////////////////////
     //Calibration
+    // HANDLE DISCONNECTION AFTER CALIBRATION HAS BEGUN
     case 2:
       if (sampFlag == true) {
         pressInitZeroVol();
