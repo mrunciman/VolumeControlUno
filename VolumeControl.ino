@@ -59,14 +59,14 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "LHS"; // RHS = 4, TOP = 5, LHS = 6
+char shakeKey[5] = "TOP"; // RHS = 4, TOP = 5, LHS = 6
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
 MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
 int pressThresh = 10;//mbar
-int pressMAX = 2500;
+int pressMAX = 2250;
 volatile double pressSetpoint = 800.00;//mbar
 bool pressFlag = false;
 int pressureError;
@@ -90,7 +90,7 @@ String stepRecv;
 int stepIn;
 int stepError = 0;
 bool motorDirection = HIGH;
-int fSamp = 20;
+int fSamp = 21;
 int stepsPerLoop = 2000/fSamp; // number of steps at max step frequency in fSamp Hz timestep
 unsigned long tSampu = 1000000/fSamp; // (1/fSamp)e6 Time between samples in microseconds
 unsigned long oneHour = 3600000000;
@@ -99,7 +99,7 @@ unsigned long timeSinceStep = 0;
 unsigned long timeNow;
 unsigned long timeAtStep;
 unsigned long writeTime;
-unsigned long tStep2k = 500; // When tStep equals 500 ms, 2 kHz pulse achieved.
+unsigned long tStep2k = 666; // When tStep equals 500 us, 2 kHz pulse achieved - 666 us for 1500 Hz maximum - 
 
 ////////////////////////////////////////////////////////
 // Messages
@@ -110,14 +110,14 @@ char limitHit[3] = "L ";
 
 ////////////////////////////////////////////////////////
 // Actuator geometry
-float S = 50.0; //Eq. triangle length in mm
+float S = 25.0; //Eq. triangle length in mm
 float L0 = S/(1.0 - 2.0/PI); // flat length for contraction = S
 float W = 30.0; // width of muscle in mm
-float numLs = 10; // number of subdivisions in muscle
-float As = PI*pow(15.0, 2.0); // piston area in mm^2
+float numLs = 3; // number of subdivisions in muscle
+float As = PI*pow((26.5/2), 2.0); // piston area in mm^2
 float factV = (W*pow(L0 , 2.0))/(2.0*numLs);
 float maxV = factV*(2.0/PI); // volume in mm^3 when fully actuated
-// steps to fill actuator rounded down, minus 1 timestep's worth
+// steps to fill actuator rounded down, minus one timestep's worth
 int maxSteps = ((maxV/As)*stepsPMM - stepsPerLoop); 
 
 
@@ -223,7 +223,7 @@ void pressureProtect() {
   // else if (pressureAbs > pressMAX) {
   //   pressureAbs = pressMAX-1;
   // }
-  //Do something if pressure exceeds some limit:
+  // Stop motor and wait if pressure exceeds 1.5 bar gauge
   if (pressureAbs > pressMAX){
     extInterrupt = true;
   }
@@ -464,7 +464,7 @@ void loop() {
   else if(shakeFlag == false){
     pumpState = 1;//Handshake
   }
-  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
+  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 2;//Calibration
   }
   else if(!Serial){

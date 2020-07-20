@@ -2,5 +2,5 @@
     "board": "arduino:avr:uno",
     "sketch": "VolumeControl.ino",
     "programmer": "AVR ISP",
-    "port": "COM6"
+    "port": "COM5"
 }
