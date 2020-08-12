@@ -59,7 +59,7 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "TOP"; // RHS = 4, TOP = 5, LHS = 6
+char shakeKey[5] = "RHS"; // TOP = 4, RHS = 5, LHS = 6
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -67,7 +67,7 @@ MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
 int pressThresh = 10;//mbar
 int pressMAX = 2250;
-volatile double pressSetpoint = 800.00;//mbar
+volatile double pressSetpoint = 850.00;//mbar
 bool pressFlag = false;
 int pressureError;
 int sampDiv = 6; // Factor to divide Timer2 frequency by
@@ -77,7 +77,8 @@ int OCR_2p5mmps = 7999;
 // Calibration
 int stateCount = 0;
 int startTime;
-int stableTime = 5000; // time in milliseconds reqd for pressure to be at setpoint
+int stableTime = 4000; // time in milliseconds reqd for pressure to be at setpoint
+bool lowFlag = false;
 
 ////////////////////////////////////////////////////////
 // Stepper variables
@@ -114,11 +115,11 @@ float S = 25.0; //Eq. triangle length in mm
 float L0 = S/(1.0 - 2.0/PI); // flat length for contraction = S
 float W = 30.0; // width of muscle in mm
 float numLs = 3; // number of subdivisions in muscle
-float As = PI*pow((26.5/2), 2.0); // piston area in mm^2
+float As = PI*pow(13.25, 2.0); // piston area in mm^2
 float factV = (W*pow(L0 , 2.0))/(2.0*numLs);
 float maxV = factV*(2.0/PI); // volume in mm^3 when fully actuated
-// steps to fill actuator rounded down, minus one timestep's worth
-int maxSteps = ((maxV/As)*stepsPMM - stepsPerLoop); 
+// steps to fill actuator rounded down, minus some fraction of a timestep's worth
+int maxSteps = ((maxV/As)*stepsPMM - (3*stepsPerLoop/4)); 
 
 
 void setup() {
@@ -244,27 +245,111 @@ void pressInitZeroVol() {
   pressureError = pressureAbs - pressSetpoint;
   prevMotorState = motorState;
   // Assign motor state based on pressure error
-  if (abs(pressureError) <= pressThresh) {
-    motorState = 0;
-    // Increment counter if previous state was also zero
-    // Pressure is stable if counter reaches some limit
-    if (prevMotorState == 0){
-      stateCount = millis() - startTime;
+  if (pressureAbs < pressSetpoint - pressThresh){ // The pressure is less than or equal to setpoint minus threshold
+    lowFlag = true;
+    if (pressureAbs > pressSetpoint - 2*pressThresh){
+      // Pressure is at setpoint minus between 1 and 2 times threshold
+      motorState = 0;
+      // Increment counter if previous state was also zero
+      // Pressure is stable if counter reaches some limit
+      if (prevMotorState == 0){
+        stateCount = millis() - startTime;
+      }
+      // Set back to zero if not
+      else{
+        stateCount = 0;
+        startTime = millis();
+      }
     }
-    // Set back to zero if not
     else{
-      stateCount = 0;
-      startTime = millis();
+      // Pressure too low, move plunger forward
+      motorState = 1;
     }
   }
-  //If pressure lower than setpoint, move motor forwards
-  else if (pressureError < -pressThresh) {
-    motorState = 1;
+  else { // Pressure is over lower bound
+    if (lowFlag == true){
+      if (pressureAbs <= pressSetpoint + pressThresh){
+        // If we previously reached lower bound and within threshold, stop
+        motorState = 0;
+        // Increment counter if previous state was also zero
+        // Pressure is stable if counter reaches some limit
+        if (prevMotorState == 0){
+          stateCount = millis() - startTime;
+        }
+        // Set back to zero if not
+        else{
+          stateCount = 0;
+          startTime = millis();
+        }
+      }
+      else{
+        // If we previously reached lower bound but outside of threshold, move back
+        motorState = 2;
+        // Reset lower bound flag, to reach it again.
+        lowFlag = false;
+      }
+    }
+    else{ 
+      // If haven't yet reached lower bound, move plunger back
+      motorState = 2;
+    }
   }
-  //If higher than setpoint, move motor back
-  else if (pressureError > pressThresh) {
-    motorState = 2;
-  }
+
+
+
+
+
+
+
+
+
+
+  // if (pressureAbs < pressSetpoint - pressThresh){
+  //   motorState = 0;
+  //   lowFlag = true;
+  //   // Increment counter if previous state was also zero
+  //   // Pressure is stable if counter reaches some limit
+  //   if (prevMotorState == 0){
+  //     stateCount = millis() - startTime;
+  //   }
+  //   // Set back to zero if not
+  //   else{
+  //     stateCount = 0;
+  //     startTime = millis();
+  //   }
+  // }
+
+
+
+
+  // if (abs(pressureError) <= pressThresh){
+  //   if (lowFlag == true){
+  //     motorState = 0;
+  //     // Increment counter if previous state was also zero
+  //     // Pressure is stable if counter reaches some limit
+  //     if (prevMotorState == 0){
+  //       stateCount = millis() - startTime;
+  //     }
+  //     // Set back to zero if not
+  //     else{
+  //       stateCount = 0;
+  //       startTime = millis();
+  //     }
+  //   }
+  // }
+  // //If pressure lower than setpoint, move motor forwards
+  // else if (pressureError < -pressThresh) {
+  //   motorState = 1;
+  //   lowFlag = false;
+  // }
+  // //If higher than setpoint, move motor back
+  // else if (pressureError > pressThresh) {
+  //   motorState = 2;
+  //   lowFlag = false;
+  // }
+
+
+
   switch (motorState) {
     case 0:
       TCCR1B &= (0 << CS11); // Turn off pulse stream
@@ -365,43 +450,41 @@ void handShake() {
 
 //Function to read input in serial monitor and set the new desired pressure.
 void readWriteSerial() {
-  if (Serial.available() > 0) {
-    firstDigit = Serial.read();
-    // Control code sends capital S to receive stepCount
-    // Capital S in ASCII is 83, so check for that:
-    if (firstDigit == 83) {
-      stepRecv = Serial.readStringUntil('\n');
-      if (stepRecv == "Closed"){
-        // Disable the motor
-        digitalWrite(enablePin, HIGH);
-        //Send disable message
-        writeSerial('D');
+  firstDigit = Serial.read();
+  // Control code sends capital S to receive stepCount
+  // Capital S in ASCII is 83, so check for that:
+  if (firstDigit == 83) {
+    stepRecv = Serial.readStringUntil('\n');
+    if (stepRecv == "Closed"){
+      // Disable the motor
+      digitalWrite(enablePin, HIGH);
+      //Send disable message
+      writeSerial('D');
+    }
+    else{
+      stepIn = stepRecv.toInt();
+      if (stepIn > maxSteps){
+        stepIn = maxSteps;
+      }
+      stepError = stepIn - stepCount;
+      //Send stepCount
+      writeSerial('S');
+      if (abs(stepError) > 0){
+        // If piston not at desired position,
+        // work out timeStep so that piston reaches after 1/fSamp seconds
+        tStep = floor(tSampu/abs(stepError));
+        if (tStep < tStep2k){
+          tStep = tStep2k; // Limit fStep to 2 kHz
+        }
       }
       else{
-        stepIn = stepRecv.toInt();
-        if (stepIn > maxSteps){
-          stepIn = maxSteps;
-        }
-        stepError = stepIn - stepCount;
-        //Send stepCount
-        writeSerial('S');
-        if (abs(stepError) > 0){
-          // If piston not at desired position,
-          // work out timeStep so that piston reaches after 1/fSamp seconds
-          tStep = floor(tSampu/abs(stepError));
-          if (tStep < tStep2k){
-            tStep = tStep2k; // Limit fStep to 2 kHz
-          }
-        }
-        else{
-          // Set tStep to large value so no steps are made.
-          tStep = oneHour;
-        }
+        // Set tStep to large value so no steps are made.
+        tStep = oneHour;
       }
     }
-    else {
-      flushInputBuffer = Serial.readStringUntil('\n');
-    }
+  }
+  else {
+    flushInputBuffer = Serial.readStringUntil('\n');
   }
 }
 
@@ -464,7 +547,7 @@ void loop() {
   else if(shakeFlag == false){
     pumpState = 1;//Handshake
   }
-  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
+  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 2;//Calibration
   }
   else if(!Serial){
@@ -542,7 +625,7 @@ void loop() {
         pressureProtect();
         sampFlag = false;
       }
-      if (serFlag == true){
+      if (Serial.available() > 0) { //Changed from serFlag to see if I can make things faster
         readWriteSerial(); // Read stepIn, send stepCount and pressure
         serFlag = false;
       }
