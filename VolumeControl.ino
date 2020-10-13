@@ -59,8 +59,7 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "TOP"; // TOP = 4, RHS = 5, LHS = 6
-// TOP = 3, RHS = 4, LHS = 5
+char shakeKey[5] = "LHS"; // TOP = 17, RHS = 18, LHS = 19
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -88,7 +87,8 @@ int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int prevMotorState = 0;
 int motorState = 3;
 volatile int stepCount = 0;
-String stepRecv;
+char stepRecv[10];
+byte index = 0;
 int stepIn;
 int stepError = 0;
 bool motorDirection = HIGH;
@@ -400,8 +400,18 @@ void readWriteSerial() {
   // Control code sends capital S to receive stepCount
   // Capital S in ASCII is 83, so check for that:
   if (firstDigit == 83) {
-    stepRecv = Serial.readStringUntil('\n');
-    if (stepRecv == "Closed"){
+    index = 0;
+    // Read all incoming data bit by bit
+    while (Serial.available() > 0) {
+      stepRecv[index] = Serial.read();
+      // Check for line feed character (\n)
+      if (stepRecv[index] == 10){
+        break;
+      }
+      index++;
+    }
+    // If input is string "Closed" then close connection
+    if (strcmp(stepRecv, "Closed")==0){
       // Disable the motor
       disconFlag = true;
       digitalWrite(enablePin, HIGH);
@@ -409,7 +419,7 @@ void readWriteSerial() {
       writeSerial('D');
     }
     else{
-      stepIn = stepRecv.toInt();
+      stepIn = atoi(stepRecv);
       if (stepIn > maxSteps){
         stepIn = maxSteps;
       }
@@ -432,6 +442,10 @@ void readWriteSerial() {
   }
   else {
     flushInputBuffer = Serial.readStringUntil('\n');
+  }
+  // Set stepRecv to zero 
+  for (int i = 0; i < sizeof(stepRecv);  ++i ) {
+    stepRecv[i] = (char)0;
   }
 }
 
@@ -497,7 +511,7 @@ void loop() {
   else if(disconFlag == true){
     pumpState = 2;//Disconnection
   }
-  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
+  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 3;//Calibration
   }
   else{
@@ -560,10 +574,23 @@ void loop() {
           if (Serial.available() > 0) {
             firstDigit = Serial.read();
             if (firstDigit == 83) {
-              stepRecv = Serial.readStringUntil('\n');
-              if (stepRecv == "Closed"){
+              index = 0;
+              // Read all incoming data bit by bit
+              while (Serial.available() > 0) {
+                stepRecv[index] = Serial.read();
+                // Check for line feed character (\n)
+                if (stepRecv[index] == 10){
+                  break;
+                }
+                index++;
+              }
+              // If input is string "Closed" then close connection
+              if (strcmp(stepRecv, "Closed")==0){
                 disconFlag = true;
                 writeSerial('D');
+              }
+              for (int i = 0; i < sizeof(stepRecv);  ++i ) {
+                stepRecv[i] = (char)0;
               }
             }
           }

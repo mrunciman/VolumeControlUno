@@ -2,5 +2,6 @@
     "board": "arduino:avr:uno",
     "sketch": "VolumeControl.ino",
     "programmer": "AVR ISP",
-    "output": "../ArduinoOutput"
+    "output": "../ArduinoOutput",
+    "port": "COM19"
 }
