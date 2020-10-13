@@ -1,13 +1,17 @@
 {
     "configurations": [
         {
-            "name": "Win32",
+            "name": "Arduino",
             "includePath": [
-                "C:\\Users\\msrun\\AppData\\Local\\Arduino15\\packages\\esp8266\\tools\\**",
-                "C:\\Users\\msrun\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.6.3\\**",
+                // "C:\\Users\\msrun\\AppData\\Local\\Arduino15\\packages\\esp8266\\tools\\**",
+                // "C:\\Users\\msrun\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.6.3\\**",
+                "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\cores\\arduino",
                 "C:\\Program Files (x86)\\Arduino\\tools\\**",
                 "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\**",
                 "C:/Program Files (x86)/Arduino/libraries",
+                "C:/Program Files (x86)/Arduino/libraries/SparkFun_MS5803-14BA_Pressure_Sensor/src",
+                "\\icnas3.cc.ic.ac.uk\\mruncima\\Arduino\\libraries",
+                "\\icnas3.cc.ic.ac.uk\\mruncima\\Arduino\\libraries\\SparkFun_MS5803-14BA_Pressure_Sensor\\src",
                 "C:/Program Files (x86)/Arduino/hardware/arduino/avr/cores/arduino",
                 "C:/Program Files (x86)/Arduino/hardware/tools/avr/avr/include",
                 "C:/Program Files (x86)/Arduino/hardware/tools/avr/lib/gcc/avr/7.3.0/include",
@@ -19,13 +23,16 @@
             "defines": [
                 "_DEBUG",
                 "UNICODE",
-                "_UNICODE"
+                "_UNICODE",
+                "USBCON"
             ],
             "browse": {
                 "path": [
                     "C:/Program Files (x86)/Arduino/hardware",
                     "C:/Program Files (x86)/Arduino/libraries",
-                    "C:/Users/msrun/Documents/Arduino/libraries",
+                    // "C:/Users/msrun/Documents/Arduino/libraries",
+                    "\\icnas3.cc.ic.ac.uk\\mruncima\\Arduino\\libraries",
+                    // "/icnas3.cc.ic.ac.uk/mruncima/Arduino/libraries",
                     "${workspaceRoot}"
                 ],
                 "limitSymbolsToIncludedHeaders": true,

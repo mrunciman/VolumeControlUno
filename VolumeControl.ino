@@ -15,7 +15,6 @@
 
 */
 
-
 #include <math.h>
 #include <Wire.h>
 //Sensor library - https://github.com/sparkfun/MS5803-14BA_Breakout/
@@ -39,6 +38,7 @@
 //#define testPin 11
 
 volatile int pumpState;
+bool disconFlag = false;
 
 //Set external interrupt pin numbers
 //Possible interrupt pins on Uno: 2, 3 - 18, 19 on Mega
@@ -59,13 +59,14 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "RHS"; // TOP = 4, RHS = 5, LHS = 6
+char shakeKey[5] = "TOP"; // TOP = 4, RHS = 5, LHS = 6
+// TOP = 3, RHS = 4, LHS = 5
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
 MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
-int pressThresh = 10;//mbar
+int pressThresh = 8;//mbar
 int pressMAX = 2250;
 volatile double pressSetpoint = 850.00;//mbar
 bool pressFlag = false;
@@ -295,61 +296,6 @@ void pressInitZeroVol() {
     }
   }
 
-
-
-
-
-
-
-
-
-
-  // if (pressureAbs < pressSetpoint - pressThresh){
-  //   motorState = 0;
-  //   lowFlag = true;
-  //   // Increment counter if previous state was also zero
-  //   // Pressure is stable if counter reaches some limit
-  //   if (prevMotorState == 0){
-  //     stateCount = millis() - startTime;
-  //   }
-  //   // Set back to zero if not
-  //   else{
-  //     stateCount = 0;
-  //     startTime = millis();
-  //   }
-  // }
-
-
-
-
-  // if (abs(pressureError) <= pressThresh){
-  //   if (lowFlag == true){
-  //     motorState = 0;
-  //     // Increment counter if previous state was also zero
-  //     // Pressure is stable if counter reaches some limit
-  //     if (prevMotorState == 0){
-  //       stateCount = millis() - startTime;
-  //     }
-  //     // Set back to zero if not
-  //     else{
-  //       stateCount = 0;
-  //       startTime = millis();
-  //     }
-  //   }
-  // }
-  // //If pressure lower than setpoint, move motor forwards
-  // else if (pressureError < -pressThresh) {
-  //   motorState = 1;
-  //   lowFlag = false;
-  // }
-  // //If higher than setpoint, move motor back
-  // else if (pressureError > pressThresh) {
-  //   motorState = 2;
-  //   lowFlag = false;
-  // }
-
-
-
   switch (motorState) {
     case 0:
       TCCR1B &= (0 << CS11); // Turn off pulse stream
@@ -457,6 +403,7 @@ void readWriteSerial() {
     stepRecv = Serial.readStringUntil('\n');
     if (stepRecv == "Closed"){
       // Disable the motor
+      disconFlag = true;
       digitalWrite(enablePin, HIGH);
       //Send disable message
       writeSerial('D');
@@ -547,11 +494,11 @@ void loop() {
   else if(shakeFlag == false){
     pumpState = 1;//Handshake
   }
-  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
-    pumpState = 2;//Calibration
+  else if(disconFlag == true){
+    pumpState = 2;//Disconnection
   }
-  else if(!Serial){
-    pumpState = 3;//Disconnection
+  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
+    pumpState = 3;//Calibration
   }
   else{
     pumpState = 4;//Active
@@ -583,11 +530,20 @@ void loop() {
     case 1:
       handShake();
       break;
+    
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //Disconnection
+    case 2:
+      digitalWrite(enablePin, HIGH);
+      // Turn off timers for interrupts
+      TCCR2B = 0;
+      // Turn off calibration pulse stream
+      TCCR1B &= (0 << CS11); 
+      break;
 
     //////////////////////////////////////////////////////////////////////////////////////////
     //Calibration
-    // HANDLE DISCONNECTION AFTER CALIBRATION HAS BEGUN
-    case 2:
+    case 3:
       if (sampFlag == true) {
         pressInitZeroVol();
         // If enough time has passed, say volume is 0, tell python and move on
@@ -600,21 +556,24 @@ void loop() {
           pressFlag = true;
         }
         else{
-          // Say calibration in progress
-          writeSerial('p');
+          // Check for disconnection
+          if (Serial.available() > 0) {
+            firstDigit = Serial.read();
+            if (firstDigit == 83) {
+              stepRecv = Serial.readStringUntil('\n');
+              if (stepRecv == "Closed"){
+                disconFlag = true;
+                writeSerial('D');
+              }
+            }
+          }
+          // If no reply, say calibration in progress
+          else{
+            writeSerial('p');
+          }
         }
         sampFlag = false;
       }
-      break;
-
-    //////////////////////////////////////////////////////////////////////////////////////////
-    //Disconnection
-    case 3:
-      digitalWrite(enablePin, HIGH);
-      // Turn off timers for interrupts
-      TCCR2B = 0;
-      // Turn off calibration pulse stream
-      TCCR1B &= (0 << CS11); 
       break;
 
     //////////////////////////////////////////////////////////////////////////////////////////
