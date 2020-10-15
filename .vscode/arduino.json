@@ -3,5 +3,5 @@
     "sketch": "VolumeControl.ino",
     "programmer": "AVR ISP",
     "output": "../ArduinoOutput",
-    "port": "COM19"
+    "port": "COM17"
 }

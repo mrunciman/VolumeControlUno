@@ -50,7 +50,10 @@ volatile bool extInterrupt = false;
 
 ////////////////////////////////////////////////////////
 // Setting OCR from Serial input
-char firstDigit = 0;  // For checking start of OCR stream
+char firstDigit = 0;  // For checking start of input stream
+char incoming = 0;
+int timeCount = 0;
+int timeoutMan = 20000;
 unsigned long OCR;
 volatile bool serFlag = false;
 String flushInputBuffer;
@@ -59,7 +62,7 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "LHS"; // TOP = 17, RHS = 18, LHS = 19
+char shakeKey[6] = "TOP"; // TOP = 17, RHS = 18, LHS = 19
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -87,7 +90,7 @@ int limitSteps = stepsPMM*2; // number of pulses for 1 mm
 int prevMotorState = 0;
 int motorState = 3;
 volatile int stepCount = 0;
-char stepRecv[10];
+char stepRecv[8];
 byte index = 0;
 int stepIn;
 int stepError = 0;
@@ -382,8 +385,7 @@ void handShake() {
         // Enable the motor after handshaking
         digitalWrite(enablePin, LOW);
         shakeInput = "";
-        // delay(500);
-        // Start reading serial for step/position
+        // Start timer used for sampFlag
         TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
         // Initialise the time variables
         timeAtStep = micros();
@@ -396,22 +398,34 @@ void handShake() {
 
 //Function to read input in serial monitor and set the new desired pressure.
 void readWriteSerial() {
-  firstDigit = Serial.read();
   // Control code sends capital S to receive stepCount
-  // Capital S in ASCII is 83, so check for that:
-  if (firstDigit == 83) {
-    index = 0;
-    // Read all incoming data bit by bit
-    while (Serial.available() > 0) {
-      stepRecv[index] = Serial.read();
-      // Check for line feed character (\n)
-      if (stepRecv[index] == 10){
+  // byte lastChar = strlen(stepRecv)-1;
+  // stepRecv[lastChar] = '\0';
+  index = 0;
+  firstDigit = 0;
+  firstDigit = Serial.read();
+  timeCount = 0;
+  // Read all incoming data byte by byte
+  while (timeCount < timeoutMan) {
+    if (Serial.available() > 0){
+      incoming = Serial.read();
+      timeCount = 0;
+      if (incoming == '\n'){
+        // Break if newline reached
         break;
+      }
+      else{
+        stepRecv[index] = incoming;
       }
       index++;
     }
-    // If input is string "Closed" then close connection
-    if (strcmp(stepRecv, "Closed")==0){
+    timeCount++;
+  }
+
+  // Check for start bit "S"
+  if(firstDigit == 'S'){
+    // If input is string "C" then close connection
+    if (strcmp(stepRecv, "Cl")==0){
       // Disable the motor
       disconFlag = true;
       digitalWrite(enablePin, HIGH);
@@ -424,7 +438,6 @@ void readWriteSerial() {
         stepIn = maxSteps;
       }
       stepError = stepIn - stepCount;
-      //Send stepCount
       writeSerial('S');
       if (abs(stepError) > 0){
         // If piston not at desired position,
@@ -443,9 +456,9 @@ void readWriteSerial() {
   else {
     flushInputBuffer = Serial.readStringUntil('\n');
   }
-  // Set stepRecv to zero 
+  // Set stepRecv to zero
   for (int i = 0; i < sizeof(stepRecv);  ++i ) {
-    stepRecv[i] = (char)0;
+    stepRecv[i] = '\0';
   }
 }
 
@@ -475,8 +488,8 @@ void stepAftertStep(){
       }
     }
     timeAtStep = micros();
-    stepError = stepIn - stepCount;
   }
+  stepError = stepIn - stepCount;
 }
 
 
@@ -572,27 +585,7 @@ void loop() {
         else{
           // Check for disconnection
           if (Serial.available() > 0) {
-            firstDigit = Serial.read();
-            if (firstDigit == 83) {
-              index = 0;
-              // Read all incoming data bit by bit
-              while (Serial.available() > 0) {
-                stepRecv[index] = Serial.read();
-                // Check for line feed character (\n)
-                if (stepRecv[index] == 10){
-                  break;
-                }
-                index++;
-              }
-              // If input is string "Closed" then close connection
-              if (strcmp(stepRecv, "Closed")==0){
-                disconFlag = true;
-                writeSerial('D');
-              }
-              for (int i = 0; i < sizeof(stepRecv);  ++i ) {
-                stepRecv[i] = (char)0;
-              }
-            }
+            readWriteSerial();
           }
           // If no reply, say calibration in progress
           else{
@@ -608,12 +601,18 @@ void loop() {
     case 4:
       // Call overpressure protection every 6th Timer2 interrupt
       if (sampFlag == true) {
+        // sampFlag = false;
         pressureProtect();
-        sampFlag = false;
       }
-      if (Serial.available() > 0) { //Changed from serFlag to see if I can make things faster
-        readWriteSerial(); // Read stepIn, send stepCount and pressure
-        serFlag = false;
+      if (Serial.available()>0){
+        if (sampFlag == true){
+          //Send stepCount
+          readWriteSerial(); // Read stepIn, send stepCount and pressure
+          sampFlag = false;
+        }
+        else{
+          flushInputBuffer = Serial.readStringUntil('\n');
+        }
       }
       // Step the motor if enough time has passed.
       stepAftertStep();
