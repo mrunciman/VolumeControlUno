@@ -56,13 +56,14 @@ int timeCount = 0;
 int timeoutMan = 20000;
 unsigned long OCR;
 volatile bool serFlag = false;
-String flushInputBuffer;
+// String flushInputBuffer;
+char flushInputBuffer[2];
 
 ////////////////////////////////////////////////////////
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[6] = "TOP"; // TOP = 17, RHS = 18, LHS = 19
+char shakeKey[6] = "LHS"; // TOP = 17, RHS = 18, LHS = 19
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -389,7 +390,8 @@ void handShake() {
         TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
         // Initialise the time variables
         timeAtStep = micros();
-        flushInputBuffer = Serial.readStringUntil('\n');
+        quickFlush();
+        // flushInputBuffer = Serial.readStringUntil('\n');
       }
     }
   }
@@ -454,7 +456,8 @@ void readWriteSerial() {
     }
   }
   else {
-    flushInputBuffer = Serial.readStringUntil('\n');
+    quickFlush();
+    // flushInputBuffer = Serial.readStringUntil('\n');
   }
   // Set stepRecv to zero
   for (int i = 0; i < sizeof(stepRecv);  ++i ) {
@@ -513,6 +516,17 @@ void writeSerial(char msg){
   Serial.write(data);
 }
 
+void quickFlush(){
+  timeCount = 0;
+  while(timeCount < timeoutMan){
+    flushInputBuffer[0] = Serial.read();
+    if (flushInputBuffer[0]=='\n'){
+      break;
+    }
+    timeCount++;
+  }
+}
+
 
 void loop() {
   if (extInterrupt == true){
@@ -547,7 +561,8 @@ void loop() {
         pressureProtect();
         sampFlag = false;
       }
-      flushInputBuffer = Serial.readStringUntil('\n');
+      quickFlush();
+      // flushInputBuffer = Serial.readStringUntil('\n');
       // Notify that limit hit
       writeSerial('L');
       break;
@@ -601,19 +616,31 @@ void loop() {
     case 4:
       // Call overpressure protection every 6th Timer2 interrupt
       if (sampFlag == true) {
-        // sampFlag = false;
+        sampFlag = false;
         pressureProtect();
       }
-      if (Serial.available()>0){
-        if (sampFlag == true){
-          //Send stepCount
+      if (serFlag == true) {
+        if (Serial.available()>0){
           readWriteSerial(); // Read stepIn, send stepCount and pressure
-          sampFlag = false;
         }
-        else{
-          flushInputBuffer = Serial.readStringUntil('\n');
+        serFlag = false;
+      }
+      else{
+        if (Serial.available()>0){
+          quickFlush();
         }
       }
+      // if (Serial.available()>0){
+      //   if (sampFlag == true){
+      //     //Send stepCount
+      //     readWriteSerial(); // Read stepIn, send stepCount and pressure
+      //     sampFlag = false;
+      //   }
+      //   else{
+      //     quickFlush();
+      //     // flushInputBuffer = Serial.readStringUntil('\n');
+      //   }
+      // }
       // Step the motor if enough time has passed.
       stepAftertStep();
       break;
@@ -630,7 +657,8 @@ void loop() {
       stateCount = 0;
       startTime = millis();
       pressureProtect();
-      flushInputBuffer = Serial.readStringUntil('\n');
+      quickFlush();
+      // flushInputBuffer = Serial.readStringUntil('\n');
       // Notify Python
       writeSerial('L');
       break;
