@@ -66,8 +66,9 @@ char shakeKey[5] = "LHS"; // TOP = 4, RHS = 5, LHS = 6
 // Pressure sensor variables
 MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
-int pressThresh = 8;//mbar
-int pressMAX = 2250;
+int pressThresh = 10;//mbar
+int pressMAX = 2500;
+int pressMIN = 400;
 volatile double pressSetpoint = 850.00;//mbar
 bool pressFlag = false;
 int pressureError;
@@ -121,6 +122,7 @@ float factV = (W*pow(L0 , 2.0))/(2.0*numLs);
 float maxV = factV*(2.0/PI); // volume in mm^3 when fully actuated
 // steps to fill actuator rounded down, minus some fraction of a timestep's worth
 int maxSteps = ((maxV/As)*stepsPMM - (3*stepsPerLoop/4)); 
+int minSteps = 500;
 
 
 void setup() {
@@ -219,14 +221,11 @@ ISR(TIMER2_COMPA_vect){
 void pressureProtect() {
   pressureAbs = sensor.getPressure(ADC_2048);
   // Filter out false readings
-  // if (pressureAbs < 0) {
-  //   pressureAbs = pressMAX;
-  // }
-  // else if (pressureAbs > pressMAX) {
-  //   pressureAbs = pressMAX-1;
-  // }
-  // Stop motor and wait if pressure exceeds 1.5 bar gauge
+  // Stop motor and wait if pressure exceeds maximum
   if (pressureAbs > pressMAX){
+    extInterrupt = true;
+  }
+  if (pressureAbs < pressMIN){
     extInterrupt = true;
   }
 }
@@ -235,14 +234,14 @@ void pressureProtect() {
 void pressInitZeroVol() {
   //Set state for motor motion based on comparison of pressure signal with setpoint
   //If within pressThresh mbar, don't move motor
-  pressureAbs = sensor.getPressure(ADC_2048);
+  // pressureAbs = sensor.getPressure(ADC_2048);
   // if (pressureAbs < 0) {
   //   pressureAbs = pressMAX;
   // }
   // else if (pressureAbs > pressMAX) {
   //   pressureAbs = pressMAX-1;
   // }
-
+  pressureProtect();
   pressureError = pressureAbs - pressSetpoint;
   prevMotorState = motorState;
   // Assign motor state based on pressure error
@@ -413,6 +412,9 @@ void readWriteSerial() {
       if (stepIn > maxSteps){
         stepIn = maxSteps;
       }
+      if (stepIn < minSteps){
+        stepIn = minSteps;
+      }
       stepError = stepIn - stepCount;
       //Send stepCount
       writeSerial('S');
@@ -497,7 +499,7 @@ void loop() {
   else if(disconFlag == true){
     pumpState = 2;//Disconnection
   }
-  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
+  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 3;//Calibration
   }
   else{
