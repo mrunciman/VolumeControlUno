@@ -61,6 +61,7 @@ bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
 char shakeKey[5] = "LHS"; // TOP = 4, RHS = 5, LHS = 6
 // TOP = 17, RHS = 18, LHS = 19
+// TOP = 7, RHS = 6, LHS = 8
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -225,9 +226,13 @@ void pressureProtect() {
   if (pressureAbs > pressMAX){
     extInterrupt = true;
   }
-  if (pressureAbs < pressMIN){
+  else if (pressureAbs < 0){
+    pressureAbs = 0;
+  }
+  else if (pressureAbs < pressMIN){
     extInterrupt = true;
   }
+
 }
 
 
@@ -499,7 +504,7 @@ void loop() {
   else if(disconFlag == true){
     pumpState = 2;//Disconnection
   }
-  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
+  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 3;//Calibration
   }
   else{
