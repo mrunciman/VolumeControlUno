@@ -138,7 +138,7 @@ void setup() {
   }
 
   //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
-  // sensor.reset();
+  // sensor.reset();f
   // sensor.begin();
   // delay(1000);
   // pressureAbs = sensor.getPressure(ADC_2048);
@@ -432,19 +432,19 @@ void stepAftertStep(){
 void writeSerial(char msg){
   writeTime = millis();
   if (msg == 'S'){ // Normal operation, send stepCount etc
-    sprintf(data, "%04d,%d,%lu%s", stepCount, int(pressureAbs*10), writeTime, endByte);
+    sprintf(data, "%04d,%d,%lu%s", stepCount, 0, writeTime, endByte);
   }
   else if (msg == 'D'){ // Python cut off comms, acknowledge this
-    sprintf(data, "%s%s,%d,%lu%s", disableMsg, shakeKey, int(pressureAbs*10), writeTime, endByte);
+    sprintf(data, "%s%s,%d,%lu%s", disableMsg, shakeKey, 0, writeTime, endByte);
   }
   else if (msg == 'L'){ // Limit switch hit, advise Python
-    sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, int(pressureAbs*10), writeTime, endByte);
+    sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, 0, writeTime, endByte);
   }
   else if (msg == 'p'){ // Calibrating
     sprintf(data, "%04d%s,%d,%lu%s", stableTime-stateCount, shakeKey, 0, writeTime, endByte);
   }
   else if(msg = 'P'){ // Calibration finished
-    sprintf(data, "%04d%s,%d,%lu%s", stepCount, shakeKey, int(pressureAbs*10), writeTime, endByte);
+    sprintf(data, "%04d%s,%d,%lu%s", stepCount, shakeKey, 0, writeTime, endByte);
   }
   Serial.write(data);
 }
@@ -506,7 +506,8 @@ void loop() {
       if (sampFlag == true) {
         pressInitZeroVol();
         // If stage has hit back limit switch, calibration is complete
-        if (calibSwitch == true){
+        if (calibFlag == true){
+          calibSwitch = true;
           // Step count should now be zero
           stepCount = 0;
           // Notify that calibration is done
