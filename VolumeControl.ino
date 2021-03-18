@@ -59,20 +59,21 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "ext"; // TOP = 4, RHS = 5, LHS = 6
+char shakeKey[5] = "PRI"; // TOP = 4, RHS = 5, LHS = 6
 // TOP = 17, RHS = 18, LHS = 19
 // TOP = 7, RHS = 6, LHS = 8
 // EXT = 10
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
-MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
+// MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
 int pressThresh = 10;//mbar
 int pressMAX = 2500;
 int pressMIN = 400;
 volatile double pressSetpoint = 850.00;//mbar
-bool pressFlag = false;
+volatile bool calibFlag = false;
+bool calibSwitch = false;
 int pressureError;
 int sampDiv = 6; // Factor to divide Timer2 frequency by
 volatile int sampCount = 0;
@@ -86,8 +87,8 @@ bool lowFlag = false;
 
 ////////////////////////////////////////////////////////
 // Stepper variables
-int stepsPMM = 100;
-int limitSteps = stepsPMM*2; // number of pulses for 1 mm
+int stepsPMM = 100; // number of pulses for 1 mm
+int limitSteps = stepsPMM*2; //Move 2 mm
 int prevMotorState = 0;
 int motorState = 3;
 volatile int stepCount = 0;
@@ -137,10 +138,10 @@ void setup() {
   }
 
   //Sensor startup - see https://github.com/sparkfun/MS5803-14BA_Breakout/
-  sensor.reset();
-  sensor.begin();
-  delay(1000);
-  pressureAbs = sensor.getPressure(ADC_2048);
+  // sensor.reset();
+  // sensor.begin();
+  // delay(1000);
+  // pressureAbs = sensor.getPressure(ADC_2048);
 
   // Disable all interrupts
   noInterrupts();
@@ -221,7 +222,7 @@ ISR(TIMER2_COMPA_vect){
 
 
 void pressureProtect() {
-  pressureAbs = sensor.getPressure(ADC_2048);
+  // pressureAbs = sensor.getPressure(ADC_2048);
   // Filter out false readings
   // Stop motor and wait if pressure exceeds maximum
   if (pressureAbs > pressMAX){
@@ -238,67 +239,11 @@ void pressureProtect() {
 
 
 void pressInitZeroVol() {
-  //Set state for motor motion based on comparison of pressure signal with setpoint
-  //If within pressThresh mbar, don't move motor
-  // pressureAbs = sensor.getPressure(ADC_2048);
-  // if (pressureAbs < 0) {
-  //   pressureAbs = pressMAX;
-  // }
-  // else if (pressureAbs > pressMAX) {
-  //   pressureAbs = pressMAX-1;
-  // }
-  pressureProtect();
-  pressureError = pressureAbs - pressSetpoint;
-  prevMotorState = motorState;
-  // Assign motor state based on pressure error
-  if (pressureAbs < pressSetpoint - pressThresh){ // The pressure is less than or equal to setpoint minus threshold
-    lowFlag = true;
-    if (pressureAbs > pressSetpoint - 2*pressThresh){
-      // Pressure is at setpoint minus between 1 and 2 times threshold
-      motorState = 0;
-      // Increment counter if previous state was also zero
-      // Pressure is stable if counter reaches some limit
-      if (prevMotorState == 0){
-        stateCount = millis() - startTime;
-      }
-      // Set back to zero if not
-      else{
-        stateCount = 0;
-        startTime = millis();
-      }
-    }
-    else{
-      // Pressure too low, move plunger forward
-      motorState = 1;
-    }
+  if (calibFlag == false){
+    motorState = 2;
   }
-  else { // Pressure is over lower bound
-    if (lowFlag == true){
-      if (pressureAbs <= pressSetpoint + pressThresh){
-        // If we previously reached lower bound and within threshold, stop
-        motorState = 0;
-        // Increment counter if previous state was also zero
-        // Pressure is stable if counter reaches some limit
-        if (prevMotorState == 0){
-          stateCount = millis() - startTime;
-        }
-        // Set back to zero if not
-        else{
-          stateCount = 0;
-          startTime = millis();
-        }
-      }
-      else{
-        // If we previously reached lower bound but outside of threshold, move back
-        motorState = 2;
-        // Reset lower bound flag, to reach it again.
-        lowFlag = false;
-      }
-    }
-    else{ 
-      // If haven't yet reached lower bound, move plunger back
-      motorState = 2;
-    }
+  else{
+    motorState = 0;
   }
 
   switch (motorState) {
@@ -337,7 +282,7 @@ void forwardInterrupt() {
   noInterrupts();
   extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
-  pressSetpoint = pressureAbs;
+  // pressSetpoint = pressureAbs;
   stepCount -= limitSteps; //Keep track of volume change after moveMotor() call
   digitalWrite(directionPin, LOW);
   moveMotor();
@@ -353,14 +298,24 @@ void backwardInterrupt() {
   TCCR1B &= (0 << CS11); // Turn off pulse stream
   //Stop other interrupts
   noInterrupts();
-  extInterrupt = true;
   //Change setpoint to currrent pressure to prevent motion
-  pressSetpoint = pressureAbs;
-  stepCount += limitSteps; //Keep track of volume change after moveMotor() call
-  digitalWrite(directionPin, HIGH);
-  moveMotor();
-  // Disable motor drivers
-  digitalWrite(enablePin, HIGH);
+  // pressSetpoint = pressureAbs;
+
+  // Say stage is calibrated or disable motor drivers
+  if (calibFlag == false){
+    calibFlag = true;
+    stepCount += limitSteps; 
+    digitalWrite(directionPin, HIGH);
+    moveMotor();
+  }
+  else{
+    //Keep track of volume change after moveMotor() call
+    extInterrupt = true;
+    stepCount += limitSteps; 
+    digitalWrite(directionPin, HIGH);
+    moveMotor();
+    digitalWrite(enablePin, HIGH);
+  }
   interrupts();
 }
 
@@ -486,7 +441,7 @@ void writeSerial(char msg){
     sprintf(data, "%s%s,%d,%lu%s", limitHit, shakeKey, int(pressureAbs*10), writeTime, endByte);
   }
   else if (msg == 'p'){ // Calibrating
-    sprintf(data, "%04d%s,%d,%lu%s", stableTime-stateCount, shakeKey, int(pressureAbs*10), writeTime, endByte);
+    sprintf(data, "%04d%s,%d,%lu%s", stableTime-stateCount, shakeKey, 0, writeTime, endByte);
   }
   else if(msg = 'P'){ // Calibration finished
     sprintf(data, "%04d%s,%d,%lu%s", stepCount, shakeKey, int(pressureAbs*10), writeTime, endByte);
@@ -505,7 +460,7 @@ void loop() {
   else if(disconFlag == true){
     pumpState = 2;//Disconnection
   }
-  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
+  else if(calibSwitch == false){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 3;//Calibration
   }
   else{
@@ -524,10 +479,6 @@ void loop() {
       TCCR1B &= (0 << CS11);  
       stateCount = 0;
       startTime = millis();
-      if (sampFlag == true) {
-        pressureProtect();
-        sampFlag = false;
-      }
       flushInputBuffer = Serial.readStringUntil('\n');
       // Notify that limit hit
       writeSerial('L');
@@ -554,14 +505,13 @@ void loop() {
     case 3:
       if (sampFlag == true) {
         pressInitZeroVol();
-        // If enough time has passed, say volume is 0, tell python and move on
-        if (stateCount >= stableTime){
-          // Step count should now be zero - muscle empty.
+        // If stage has hit back limit switch, calibration is complete
+        if (calibSwitch == true){
+          // Step count should now be zero
           stepCount = 0;
           // Notify that calibration is done
           writeSerial('P');
           TCCR1B &= (0 << CS11); // Turn off pulse stream
-          pressFlag = true;
         }
         else{
           // Check for disconnection
@@ -588,10 +538,10 @@ void loop() {
     //Active
     case 4:
       // Call overpressure protection every 6th Timer2 interrupt
-      if (sampFlag == true) {
-        pressureProtect();
-        sampFlag = false;
-      }
+      // if (sampFlag == true) {
+      //   pressureProtect();
+      //   sampFlag = false;
+      // }
       if (Serial.available() > 0) { //Changed from serFlag to see if I can make things faster
         readWriteSerial(); // Read stepIn, send stepCount and pressure
         serFlag = false;
@@ -611,7 +561,7 @@ void loop() {
       TCCR1B &= (0 << CS11);  
       stateCount = 0;
       startTime = millis();
-      pressureProtect();
+      // pressureProtect();
       flushInputBuffer = Serial.readStringUntil('\n');
       // Notify Python
       writeSerial('L');
