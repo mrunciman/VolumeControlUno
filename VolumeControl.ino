@@ -304,7 +304,7 @@ void backwardInterrupt() {
   // Say stage is calibrated or disable motor drivers
   if (calibFlag == false){
     calibFlag = true;
-    stepCount += limitSteps; 
+    stepCount = limitSteps; 
     digitalWrite(directionPin, HIGH);
     moveMotor();
   }
