@@ -59,7 +59,7 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "TOP"; // TOP = 4, RHS = 5, LHS = 6
+char shakeKey[5] = "LHS"; // TOP = 4, RHS = 5, LHS = 6
 // TOP = 17, RHS = 18, LHS = 19
 // TOP = 7, RHS = 6, LHS = 8
 // EXT = 10
