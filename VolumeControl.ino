@@ -62,7 +62,7 @@ String shakeInput; // 3 bit password to assign pump name/position
 char shakeKey[5] = "PRI"; // TOP = 4, RHS = 5, LHS = 6
 // TOP = 17, RHS = 18, LHS = 19
 // TOP = 7, RHS = 6, LHS = 8
-// EXT = 10
+// PRI = 10
 
 ////////////////////////////////////////////////////////
 // Pressure sensor variables
@@ -124,8 +124,8 @@ float As = PI*pow(13.25, 2.0); // piston area in mm^2
 float factV = (W*pow(L0 , 2.0))/(2.0*numLs);
 float maxV = factV*(2.0/PI); // volume in mm^3 when fully actuated
 // steps to fill actuator rounded down, minus some fraction of a timestep's worth
-int maxSteps = ((maxV/As)*stepsPMM - (3*stepsPerLoop/4)); 
-int minSteps = 500;
+int maxSteps = 39*stepsPMM; 
+int minSteps = 0;
 
 
 void setup() {
@@ -509,7 +509,7 @@ void loop() {
         if (calibFlag == true){
           calibSwitch = true;
           // Step count should now be zero
-          stepCount = 0;
+          // stepCount = 0;
           // Notify that calibration is done
           writeSerial('P');
           TCCR1B &= (0 << CS11); // Turn off pulse stream
