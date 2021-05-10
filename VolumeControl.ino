@@ -59,7 +59,7 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "LHS"; // TOP = 4, RHS = 5, LHS = 6
+char shakeKey[5] = "RHS"; // TOP = 4, RHS = 5, LHS = 6
 // TOP = 17, RHS = 18, LHS = 19
 // TOP = 7, RHS = 6, LHS = 8
 // EXT = 10
@@ -69,7 +69,7 @@ char shakeKey[5] = "LHS"; // TOP = 4, RHS = 5, LHS = 6
 MS5803 sensor(ADDRESS_LOW);//CSB pin pulled low, so address low
 double pressureAbs = 1000.00; // Initial value
 int pressThresh = 10;//mbar
-int pressMAX = 2500;
+int pressMAX = 3500;
 int pressMIN = 400;
 volatile double pressSetpoint = 850.00;//mbar
 bool pressFlag = false;
@@ -124,7 +124,7 @@ float factV = (W*pow(L0 , 2.0))/(2.0*numLs);
 float maxV = factV*(2.0/PI); // volume in mm^3 when fully actuated
 // steps to fill actuator rounded down, minus some fraction of a timestep's worth
 int maxSteps = ((maxV/As)*stepsPMM - (3*stepsPerLoop/4)); 
-int minSteps = 500;
+int minSteps = 10;
 
 
 void setup() {
@@ -230,9 +230,9 @@ void pressureProtect() {
   else if (pressureAbs < 0){
     pressureAbs = 0;
   }
-  else if (pressureAbs < pressMIN){
-    extInterrupt = true;
-  }
+  // else if (pressureAbs < pressMIN){
+  //   extInterrupt = true;
+  // }
 
 }
 
