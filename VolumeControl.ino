@@ -59,7 +59,7 @@ String flushInputBuffer;
 // Handshake variables
 bool shakeFlag = false;
 String shakeInput; // 3 bit password to assign pump name/position
-char shakeKey[5] = "RHS"; // TOP = 4, RHS = 5, LHS = 6
+char shakeKey[5] = "PNEU"; // TOP = 4, RHS = 5, LHS = 6
 // TOP = 17, RHS = 18, LHS = 19
 // TOP = 7, RHS = 6, LHS = 8
 
@@ -126,8 +126,8 @@ float As = PI*pow(13.25, 2.0); // piston area in mm^2
 float factV = (W*pow(L0 , 2.0))/(2.0*numLs);
 float maxV = factV*(2.0/PI); // volume in mm^3 when fully actuated
 // steps to fill actuator rounded down, minus some fraction of a timestep's worth
-int maxSteps = 2447;//((maxV/As)*stepsPMM - (3*stepsPerLoop/4)); //    13.5 ml 
-int minSteps = 500;
+int maxSteps = 13000;//((maxV/As)*stepsPMM - (3*stepsPerLoop/4)); //    13.5 ml 
+int minSteps = 0;
 
 
 void setup() {
@@ -232,12 +232,12 @@ void pressureProtect() {
   if (pressureAbs > pressMAX){
     extInterrupt = true;
   }
-  else if (pressureAbs < 0){
-    pressureAbs = 0;
-  }
-  else if (pressureAbs < pressMIN){
-    extInterrupt = true;
-  }
+  // else if (pressureAbs < 0){
+  //   pressureAbs = 0;
+  // }
+  // else if (pressureAbs < pressMIN){
+  //   extInterrupt = true;
+  // }
 
 }
 
