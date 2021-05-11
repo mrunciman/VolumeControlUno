@@ -573,7 +573,7 @@ void loop() {
   else if(disconFlag == true){
     pumpState = 2;//Disconnection
   }
-  else if(pressFlag == false){//CHANGE TO FALSE TO ACTIVATE
+  else if(pressFlag == true){//CHANGE TO FALSE TO ACTIVATE
     pumpState = 3;//Calibration
   }
   else{
@@ -622,6 +622,7 @@ void loop() {
     case 3:
       if (sampFlag == true) {
         
+        intPressFlag == true;
         if (intPressFlag == true) {
           pressSetpoint = pressForceTest;
           pressControl();
