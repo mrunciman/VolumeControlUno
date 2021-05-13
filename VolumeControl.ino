@@ -70,7 +70,7 @@ double pressThresh = 10.00;//mbar
 int pressMAX = 2500;
 int pressMIN = 400;
 volatile double pressSetpoint = 850.00;//mbar
-double pressForceTest = 1500.00 + pressThresh;
+double pressForceTest = 2000.00 + pressThresh;
 volatile int dirFlag = 0;
 bool pressFlag = false;
 bool intPressFlag = false;
@@ -78,7 +78,7 @@ double pressureError;
 int sampDiv = 6; // Factor to divide Timer2 frequency by
 volatile int sampCount = 0;
 volatile bool sampFlag = false;
-int OCR_mmps = 3999; // 3999 for 5 mm/s speed
+int OCR_mmps = 1999; // 3999 for 5 mm/s speed
 // Calibration
 int stateCount = 0;
 int startTime;
